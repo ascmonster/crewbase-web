@@ -31,29 +31,25 @@ function statusCfg(status: string) {
   return STATUS_CFG[status.toLowerCase()] ?? { label: status.toUpperCase(), cls: "bg-zinc-500/10 text-zinc-400 ring-1 ring-zinc-500/20" };
 }
 
-function deriveDisplayStatus(event: { status: string; start_date: string; end_date: string; timezone: string }): string {
+function deriveDisplayStatus(event: { status: string; start_date: string; end_date: string; timezone?: string }): string {
   if (event.status === "cancelled") return "cancelled";
   if (event.status === "completed") return "completed";
 
   const now = new Date();
-  const start = new Date(event.start_date + "T00:00:00");
-  const end = new Date(event.end_date + "T00:00:00");
+  const startDate = new Date(event.start_date + "T00:00:00");
+  const endDate   = new Date(event.end_date   + "T23:59:59");
 
-  // Between start_date and end_date (both at local midnight)
-  if (now >= start && now <= end) return "active";
+  if (now > endDate) return "completed";
+  if (now >= startDate && now <= endDate) return "active";
 
-  // start_date is today
+  // start date is today (regardless of current time within the day)
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-  const todayDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  if (startDay.getTime() === todayDay.getTime()) return "active";
+  const startDay = new Date(startDate);
+  startDay.setHours(0, 0, 0, 0);
+  if (startDay.getTime() === today.getTime()) return "active";
 
-  // start_date is in the future
-  if (startDay > todayDay) return "upcoming";
-
-  // end_date is in the past
-  return "completed";
+  return "upcoming";
 }
 
 function formatEventDate(dateStr: string) {
