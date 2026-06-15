@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase";
 
 type Stage = "form" | "pending" | "rejected";
@@ -97,8 +98,7 @@ export default function LoginPage() {
         <div className="w-full max-w-sm">
           <div className="mb-10 text-center">
             <div className="flex justify-center mb-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/logo-icon.png" alt="Crewbase" style={{ width: 80, height: 80, objectFit: "contain" }} />
+              <Image src="/logo-icon.png" alt="Crewbase" width={80} height={80} style={{ objectFit: "contain" }} />
             </div>
             <span className="text-3xl font-bold tracking-tight text-white">
               Crew<span className="text-indigo-400">base</span>
@@ -133,8 +133,7 @@ export default function LoginPage() {
         <div className="w-full max-w-sm">
           <div className="mb-10 text-center">
             <div className="flex justify-center mb-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/logo-icon.png" alt="Crewbase" style={{ width: 80, height: 80, objectFit: "contain" }} />
+              <Image src="/logo-icon.png" alt="Crewbase" width={80} height={80} style={{ objectFit: "contain" }} />
             </div>
             <span className="text-3xl font-bold tracking-tight text-white">
               Crew<span className="text-indigo-400">base</span>
