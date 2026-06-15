@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 import { createClient } from "@/lib/supabase";
+import { deriveDisplayStatus } from "@/lib/eventStatus";
 
 type EventRow = {
   id: string;
@@ -31,26 +32,6 @@ function statusCfg(status: string) {
   return STATUS_CFG[status.toLowerCase()] ?? { label: status.toUpperCase(), cls: "bg-zinc-500/10 text-zinc-400 ring-1 ring-zinc-500/20" };
 }
 
-function deriveDisplayStatus(event: { status: string; start_date: string; end_date: string; timezone?: string }): string {
-  if (event.status === "cancelled") return "cancelled";
-  if (event.status === "completed") return "completed";
-
-  const now = new Date();
-  const startDate = new Date(event.start_date + "T00:00:00");
-  const endDate   = new Date(event.end_date   + "T23:59:59");
-
-  if (now > endDate) return "completed";
-  if (now >= startDate && now <= endDate) return "active";
-
-  // start date is today (regardless of current time within the day)
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const startDay = new Date(startDate);
-  startDay.setHours(0, 0, 0, 0);
-  if (startDay.getTime() === today.getTime()) return "active";
-
-  return "upcoming";
-}
 
 function formatEventDate(dateStr: string) {
   const d = new Date(dateStr + "T00:00:00");

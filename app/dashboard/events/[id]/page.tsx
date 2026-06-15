@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Shield } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { useRequireAuth } from "@/lib/useRequireAuth";
+import { deriveDisplayStatus } from "@/lib/eventStatus";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -1728,7 +1729,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         <div className="flex items-start justify-between gap-3 mb-2">
           <h1 className="text-xl font-bold text-white leading-tight">{event.name}</h1>
           <button onClick={() => setShowCancel(true)}>
-            <Badge status={event.status} />
+            <Badge status={deriveDisplayStatus(event)} />
           </button>
         </div>
         <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500 items-center">
