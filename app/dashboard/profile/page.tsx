@@ -219,7 +219,7 @@ export default function ProfilePage() {
     setDeleting(true);
     const supabase = createClient();
     const { data: { session } } = await supabase.auth.getSession();
-    await fetch("https://smogyxcidyhfdiatpjpy.supabase.co/functions/v1/delete-account", {
+    await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/delete-account`, {
       method: "POST",
       headers: { Authorization: `Bearer ${session?.access_token}` },
     });

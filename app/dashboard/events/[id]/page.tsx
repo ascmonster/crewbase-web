@@ -1153,7 +1153,9 @@ function DocsTab({
       const [saRes, sdaRes, vdaRes, vaRes] = await Promise.all([
         supabase.from("event_staff_approval").select("staff_id, status, approved_at").eq("event_id", eventId),
         supabase.from("staff_document_acknowledgements").select("document_id, staff_id").in("document_id", docIds),
-        supabase.from("vendor_document_acknowledgements").select("vendor_id, document_id").in("vendor_id", vendorUserIds).in("document_id", docIds),
+        vendorUserIds.length > 0
+          ? supabase.from("vendor_document_acknowledgements").select("vendor_id, document_id").in("vendor_id", vendorUserIds).in("document_id", docIds)
+          : Promise.resolve({ data: [] }),
         supabase.from("event_vendor_approval").select("vendor_id, status").eq("event_id", eventId),
       ]);
 
@@ -1416,7 +1418,7 @@ function RevenueTab({ eventId }: { eventId: string }) {
     if (!session) { setError("Not authenticated"); setLoading(false); return; }
     try {
       const res = await fetch(
-        "https://smogyxcidyhfdiatpjpy.supabase.co/functions/v1/vendor-event-revenue",
+        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/vendor-event-revenue`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },

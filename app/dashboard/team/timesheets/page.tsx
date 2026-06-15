@@ -211,13 +211,6 @@ function ShiftCard({
 
   return (
     <>
-      {editBreaks && onUpdateBreaks && (
-        <EditBreaksModal shift={shift} onSaved={(u) => { onUpdateBreaks(u); setEditBreaks(false); }} onClose={() => setEditBreaks(false)} />
-      )}
-      {markPaid && onOpenMarkPaid === undefined && (
-        <div /> // handled by parent
-      )}
-
       <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
         <div className="flex items-center gap-3 mb-3">
           <div className="w-9 h-9 rounded-full bg-violet-600/20 text-violet-300 flex items-center justify-center text-sm font-bold shrink-0">
