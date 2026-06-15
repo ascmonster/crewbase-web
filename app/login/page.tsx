@@ -170,6 +170,9 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="mb-10 text-center">
+          <div className="flex justify-center mb-2">
+            <Image src="/logo-icon.png" alt="Crewbase" width={80} height={80} style={{ objectFit: "contain" }} />
+          </div>
           <span className="text-3xl font-bold tracking-tight text-white">
             Crew<span className="text-indigo-400">base</span>
           </span>
