@@ -65,7 +65,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className="flex h-screen bg-[#0a0a0a] text-white overflow-hidden">
       {/* Desktop sidebar */}
       <aside className="hidden lg:flex flex-col w-56 shrink-0 border-r border-white/[0.06]">
-        <div className="h-14 px-5 flex items-center border-b border-white/[0.06] shrink-0">
+        <div className="h-14 px-5 flex items-center gap-2.5 border-b border-white/[0.06] shrink-0">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-icon.png" alt="" style={{ width: 28, height: 28, objectFit: "contain" }} />
           <span className="text-base font-bold tracking-tight">
             Crew<span className="text-indigo-400">base</span>
           </span>

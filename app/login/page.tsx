@@ -96,6 +96,10 @@ export default function LoginPage() {
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center px-4">
         <div className="w-full max-w-sm">
           <div className="mb-10 text-center">
+            <div className="flex justify-center mb-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logo-icon.png" alt="Crewbase" style={{ width: 80, height: 80, objectFit: "contain" }} />
+            </div>
             <span className="text-3xl font-bold tracking-tight text-white">
               Crew<span className="text-indigo-400">base</span>
             </span>
@@ -128,6 +132,10 @@ export default function LoginPage() {
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center px-4">
         <div className="w-full max-w-sm">
           <div className="mb-10 text-center">
+            <div className="flex justify-center mb-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logo-icon.png" alt="Crewbase" style={{ width: 80, height: 80, objectFit: "contain" }} />
+            </div>
             <span className="text-3xl font-bold tracking-tight text-white">
               Crew<span className="text-indigo-400">base</span>
             </span>
