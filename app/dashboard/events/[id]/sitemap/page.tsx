@@ -8,7 +8,7 @@ import { useRequireAuth } from "@/lib/useRequireAuth";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const MAPBOX_TOKEN = "__MAPBOX_TOKEN__";
+const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
 
 const ZONE_TYPES = [
   { id: "Vendor Zone",       label: "Vendor Zone",       emoji: "🪧", color: "#5B4AE8" },
