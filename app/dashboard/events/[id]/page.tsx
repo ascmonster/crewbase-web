@@ -1649,13 +1649,13 @@ function RevenueTab({ eventId }: { eventId: string }) {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-zinc-500">Square Integration</span>
-        <button
-          onClick={() => {/* Square OAuth — coming soon */}}
+        <a
+          href={`/api/square/connect?event_id=${eventId}`}
           className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/10"
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="3"/></svg>
           Connect Square
-        </button>
+        </a>
       </div>
 
       {data.is_past && (
