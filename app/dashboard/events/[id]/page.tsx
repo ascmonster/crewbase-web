@@ -1938,7 +1938,7 @@ function RevenueTab({ eventId }: { eventId: string }) {
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-white">{v.business_name}</p>
-                    <p className="text-xs text-zinc-500">${v.vendor_total.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
+                    <p className="text-xs text-zinc-500">${(v.vendor_total ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
                   </div>
                 </div>
                 <button
@@ -1965,7 +1965,7 @@ function RevenueTab({ eventId }: { eventId: string }) {
                       </div>
                       {t.square_linked && (
                         <div className="text-right shrink-0">
-                          <p className="text-xs font-medium text-white">${t.revenue.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
+                          <p className="text-xs font-medium text-white">${(t.revenue ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
                           <p className="text-xs text-zinc-500">{t.transactions} txn{t.transactions !== 1 ? "s" : ""}</p>
                         </div>
                       )}
