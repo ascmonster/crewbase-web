@@ -2064,21 +2064,17 @@ function SplitsTab({ eventId }: { eventId: string }) {
         const supabase = createClient();
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) return;
-        const locUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/get-square-locations`;
-        console.log("[get-square-locations] URL:", locUrl);
-        console.log("[get-square-locations] token (first 20):", session.access_token.slice(0, 20));
-        const res = await fetch(locUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ event_id: eventId }),
-        });
-        const rawBody = await res.text();
-        console.log("[get-square-locations] status:", res.status, "body:", rawBody);
-        if (!res.ok) throw new Error(rawBody);
-        const json = JSON.parse(rawBody);
-        const parsedLocations = json.locations ?? [];
-        console.log("[get-square-locations] parsed locations:", parsedLocations);
-        setSquareLocations(parsedLocations);
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/get-square-locations`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+            body: JSON.stringify({ event_id: eventId }),
+          }
+        );
+        if (!res.ok) throw new Error(await res.text());
+        const json = await res.json();
+        setSquareLocations(json.locations ?? []);
       } catch {
         setLocationsError("Could not load Square locations. Check your Square connection.");
       }
@@ -2111,8 +2107,19 @@ function SplitsTab({ eventId }: { eventId: string }) {
       setVendorLocations(prev => ({ ...prev, [vendorId]: { square_location_id: locationId, name: locationName } }));
       setLocationSaved(prev => ({ ...prev, [vendorId]: true }));
       setTimeout(() => setLocationSaved(prev => ({ ...prev, [vendorId]: false })), 2000);
-      // Keep event_vendor_splits.square_location_id in sync so the sync edge function works
-      await supabase.from("event_vendor_splits").update({ square_location_id: locationId }).eq("event_id", eventId).eq("vendor_id", vendorId);
+        await supabase.from("event_vendor_splits").upsert(
+        {
+          vendor_id: vendorId,
+          event_id: eventId,
+          square_location_id: locationId,
+          vendor_percentage: 50,
+          promoter_percentage: 50,
+          site_fee_cents: 0,
+          settlement_mode: "end_of_day",
+          fee_payer: "vendor",
+        },
+        { onConflict: "vendor_id,event_id" }
+      );
     }
   }
 
@@ -2226,10 +2233,9 @@ function SplitsTab({ eventId }: { eventId: string }) {
                   className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
                 >
                   <option value="">-- Select a location --</option>
-                  {squareLocations.map((loc) => {
-                    console.log("[SplitsTab] rendering location option:", loc);
-                    return <option key={loc.id} value={loc.id}>{loc.name}</option>;
-                  })}
+                  {squareLocations.map((loc) => (
+                    <option key={loc.id} value={loc.id}>{loc.name}</option>
+                  ))}
                 </select>
                 {locationSaved[v.vendor_id] && <p className="text-xs text-emerald-400">Saved ✓</p>}
               </div>
