@@ -1426,7 +1426,13 @@ type VendorSplitState = {
   saved: boolean;
 };
 
-function PaymentSplitsSection({ eventId, vendors }: { eventId: string; vendors: RevenueVendor[] | undefined }) {
+type VendorTxSummary = {
+  total_cents: number;
+  card_cents: number;
+  cash_cents: number;
+};
+
+function PaymentSplitsSection({ eventId, vendors, txSummaries }: { eventId: string; vendors: RevenueVendor[] | undefined; txSummaries: Record<string, VendorTxSummary> }) {
   const [splits, setSplits] = useState<Record<string, VendorSplitState>>({});
   const [fetchDone, setFetchDone] = useState(false);
 
@@ -1604,6 +1610,64 @@ function PaymentSplitsSection({ eventId, vendors }: { eventId: string; vendors: 
             >
               {s.saving ? "Saving…" : "Save Split"}
             </button>
+
+            {(() => {
+              const tx = txSummaries[v.vendor_id];
+              if (!tx || tx.total_cents === 0) return null;
+              const siteFeeCents = Math.round((parseFloat(s.site_fee) || 0) * 100);
+              const crewbaseFeeCents = Math.round(tx.total_cents * 0.0295);
+              const remainder = tx.total_cents - crewbaseFeeCents;
+              const promoterCutCents = Math.round(remainder * (pp / 100));
+              const vendorCutCents = Math.round(remainder * (vp / 100));
+              const netVendorPayoutCents = vendorCutCents - siteFeeCents;
+              const fmt = (cents: number) =>
+                `$${(Math.abs(cents) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+              return (
+                <div className="rounded-lg border border-white/[0.04] bg-black/20 px-4 py-3 flex flex-col gap-1.5">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-0.5">Split Breakdown</p>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-zinc-400">Total Sales</span>
+                    <span className="text-white font-medium">{fmt(tx.total_cents)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-zinc-500">Card</span>
+                    <span className="text-zinc-300">{fmt(tx.card_cents)}</span>
+                  </div>
+                  {tx.cash_cents > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-zinc-500">Cash <span className="text-amber-400">(manual collection)</span></span>
+                      <span className="text-zinc-300">{fmt(tx.cash_cents)}</span>
+                    </div>
+                  )}
+                  <div className="my-0.5 border-t border-white/[0.06]" />
+                  <div className="flex justify-between text-xs">
+                    <span className="text-zinc-400">Crewbase Fee (2.95%)</span>
+                    <span className="text-red-400">−{fmt(crewbaseFeeCents)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-zinc-400">Promoter Cut ({pp}%)</span>
+                    <span className="text-zinc-300">{fmt(promoterCutCents)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-zinc-400">Vendor Cut ({vp}%)</span>
+                    <span className="text-zinc-300">{fmt(vendorCutCents)}</span>
+                  </div>
+                  {siteFeeCents > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-zinc-400">Site Fee</span>
+                      <span className="text-red-400">−{fmt(siteFeeCents)}</span>
+                    </div>
+                  )}
+                  <div className="my-0.5 border-t border-white/[0.06]" />
+                  <div className="flex justify-between text-xs font-semibold">
+                    <span className="text-zinc-300">Net Vendor Payout</span>
+                    <span className={netVendorPayoutCents >= 0 ? "text-emerald-400" : "text-red-400"}>
+                      {netVendorPayoutCents < 0 ? "−" : ""}{fmt(netVendorPayoutCents)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         );
       })}
@@ -1617,6 +1681,9 @@ function RevenueTab({ eventId }: { eventId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [squareConnected, setSquareConnected] = useState<boolean | null>(null);
   const [squareToast, setSquareToast] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncToast, setSyncToast] = useState<string | null>(null);
+  const [txSummaries, setTxSummaries] = useState<Record<string, VendorTxSummary>>({});
 
   // Check whether a Square config already exists for this event
   useEffect(() => {
@@ -1675,7 +1742,51 @@ function RevenueTab({ eventId }: { eventId: string }) {
     setLoading(false);
   }
 
+  async function loadTxSummaries() {
+    const supabase = createClient();
+    const { data: txRows } = await supabase
+      .from("square_transactions")
+      .select("vendor_id, amount_cents, payment_method")
+      .eq("event_id", eventId);
+    const map: Record<string, VendorTxSummary> = {};
+    for (const tx of txRows ?? []) {
+      if (!map[tx.vendor_id]) map[tx.vendor_id] = { total_cents: 0, card_cents: 0, cash_cents: 0 };
+      const amt = tx.amount_cents ?? 0;
+      map[tx.vendor_id].total_cents += amt;
+      if (tx.payment_method === "CASH") {
+        map[tx.vendor_id].cash_cents += amt;
+      } else {
+        map[tx.vendor_id].card_cents += amt;
+      }
+    }
+    setTxSummaries(map);
+  }
+
+  async function syncAndRefresh() {
+    setSyncing(true);
+    const supabase = createClient();
+    try {
+      const { data: syncResult, error: syncError } = await supabase.functions.invoke(
+        "sync-square-transactions",
+        { body: { event_id: eventId } }
+      );
+      if (syncError) {
+        console.error("sync-square-transactions error:", syncError);
+      } else {
+        const synced: number = syncResult?.synced ?? 0;
+        setSyncToast(`Synced ${synced} transaction${synced !== 1 ? "s" : ""} from Square`);
+        setTimeout(() => setSyncToast(null), 4000);
+      }
+    } catch (e) {
+      console.error("sync-square-transactions threw:", e);
+    }
+    await loadTxSummaries();
+    await fetchRevenue();
+    setSyncing(false);
+  }
+
   useEffect(() => { fetchRevenue(); }, [eventId]);
+  useEffect(() => { loadTxSummaries(); }, [eventId]);
 
   if (loading) return <div className="text-center py-16 text-zinc-500 text-sm">Loading revenue…</div>;
   if (error)   return <div className="text-center py-16 text-red-400 text-sm">{error}</div>;
@@ -1726,11 +1837,27 @@ function RevenueTab({ eventId }: { eventId: string }) {
         </p>
       </div>
 
-      <button onClick={fetchRevenue} className="self-end rounded-lg border border-white/[0.08] px-4 py-2 text-xs font-medium text-zinc-400 hover:text-white transition-colors">
-        ↻ Refresh
+      {syncToast && (
+        <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs font-medium text-emerald-400">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+          {syncToast}
+        </div>
+      )}
+
+      <button
+        onClick={syncAndRefresh}
+        disabled={syncing}
+        className="self-end flex items-center gap-1.5 rounded-lg border border-white/[0.08] px-4 py-2 text-xs font-medium text-zinc-400 hover:text-white transition-colors disabled:opacity-40"
+      >
+        {syncing ? (
+          <>
+            <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+            Syncing…
+          </>
+        ) : "↻ Refresh"}
       </button>
 
-      <PaymentSplitsSection eventId={eventId} vendors={data.vendors ?? []} />
+      <PaymentSplitsSection eventId={eventId} vendors={data.vendors ?? []} txSummaries={txSummaries} />
 
       <div className="border-t border-white/[0.06] pt-2">
         <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-500">Revenue Breakdown</p>
