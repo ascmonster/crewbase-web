@@ -6,8 +6,6 @@ const SCOPES = [
   "MERCHANT_PROFILE_READ",
   "PAYMENTS_READ",
   "ORDERS_READ",
-  "SETTLEMENTS_READ",
-  "BANK_ACCOUNTS_READ",
 ].join(" ");
 
 export async function GET(request: NextRequest) {
