@@ -1391,6 +1391,69 @@ function BroadcastTab({
   );
 }
 
+// ── Modal: Add Extra Truck (Revenue tab) ──────────────────────────────────
+
+function AddExtraTruckModal({
+  eventId,
+  vendorId,
+  onClose,
+  onAdded,
+}: {
+  eventId: string;
+  vendorId: string;
+  onClose: () => void;
+  onAdded: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [squareLocationId, setSquareLocationId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function submit() {
+    if (!name.trim()) { setErr("Truck name is required."); return; }
+    setSaving(true);
+    setErr(null);
+    const { error: tErr } = await createClient()
+      .from("event_vendor_extra_trucks")
+      .insert({ event_id: eventId, vendor_id: vendorId, truck_name: name.trim(), square_location_id: squareLocationId.trim() || null });
+    if (tErr) { setErr(tErr.message); setSaving(false); return; }
+    onAdded();
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/70">
+      <div className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-[#141414] p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="font-semibold text-white">Add Truck</h3>
+          <button onClick={onClose} className="text-zinc-500 hover:text-white transition-colors">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div className="flex flex-col gap-4 mb-5">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Truck Name</label>
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="The Taco Truck"
+              className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500 transition-colors" />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Square Location ID (optional)</label>
+            <input type="text" value={squareLocationId} onChange={(e) => setSquareLocationId(e.target.value)} placeholder="LID-XXXXX"
+              className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-indigo-500 transition-colors" />
+          </div>
+        </div>
+        {err && <p className="text-xs text-red-400 mb-3">{err}</p>}
+        <div className="flex gap-3">
+          <button onClick={onClose} className="flex-1 h-9 rounded-lg border border-white/[0.08] text-sm text-zinc-400 hover:text-white transition-colors">Cancel</button>
+          <button onClick={submit} disabled={saving} className="flex-1 h-9 rounded-lg bg-indigo-600 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors disabled:opacity-50">
+            {saving ? "Saving…" : "Add"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Tab: Revenue ───────────────────────────────────────────────────────────
 
 type RevenueTruck = {
@@ -1754,6 +1817,7 @@ function RevenueTab({ eventId }: { eventId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [squareConnected, setSquareConnected] = useState<boolean | null>(null);
   const [squareToast, setSquareToast] = useState(false);
+  const [addTruckFor, setAddTruckFor] = useState<string | null>(null);
 
   // Check whether a Square config already exists for this event
   useEffect(() => {
@@ -1863,12 +1927,72 @@ function RevenueTab({ eventId }: { eventId: string }) {
         </p>
       </div>
 
+      {data.vendors.length > 0 && (
+        <div className="flex flex-col gap-3">
+          {data.vendors.map((v) => (
+            <div key={v.vendor_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-violet-600/20 text-violet-300 flex items-center justify-center text-sm font-bold shrink-0">
+                    {v.business_name.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-white">{v.business_name}</p>
+                    <p className="text-xs text-zinc-500">${v.vendor_total.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setAddTruckFor(v.vendor_id)}
+                  className="rounded-full border border-white/[0.08] px-3 py-1 text-xs font-medium text-zinc-400 hover:text-white hover:border-white/20 transition-colors shrink-0"
+                >
+                  + Add truck
+                </button>
+              </div>
+              {v.trucks.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  {v.trucks.map((t) => (
+                    <div key={t.truck_id} className="rounded-lg border border-white/[0.04] bg-black/20 px-3 py-2.5 flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-white">{t.truck_name}</p>
+                        {t.square_linked && t.square_location_name ? (
+                          <p className="text-xs text-zinc-500 flex items-center gap-1 mt-0.5">
+                            <span className="text-emerald-400">✓</span>
+                            {t.square_location_name}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-zinc-600 mt-0.5">not linked</p>
+                        )}
+                      </div>
+                      {t.square_linked && (
+                        <div className="text-right shrink-0">
+                          <p className="text-xs font-medium text-white">${t.revenue.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
+                          <p className="text-xs text-zinc-500">{t.transactions} txn{t.transactions !== 1 ? "s" : ""}</p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       <button
         onClick={fetchRevenue}
         className="self-end rounded-lg border border-white/[0.08] px-4 py-2 text-xs font-medium text-zinc-400 hover:text-white transition-colors"
       >
         ↻ Refresh
       </button>
+
+      {addTruckFor && (
+        <AddExtraTruckModal
+          eventId={eventId}
+          vendorId={addTruckFor}
+          onClose={() => setAddTruckFor(null)}
+          onAdded={() => { setAddTruckFor(null); fetchRevenue(); }}
+        />
+      )}
     </div>
   );
 }
@@ -1946,17 +2070,21 @@ function SplitsTab({ eventId }: { eventId: string }) {
         const supabase = createClient();
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) return;
-        const res = await fetch(
-          `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/get-square-locations`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-            body: JSON.stringify({ event_id: eventId }),
-          }
-        );
-        if (!res.ok) throw new Error(await res.text());
-        const json = await res.json();
-        setSquareLocations(json.locations ?? []);
+        const locUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/get-square-locations`;
+        console.log("[get-square-locations] URL:", locUrl);
+        console.log("[get-square-locations] token (first 20):", session.access_token.slice(0, 20));
+        const res = await fetch(locUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ event_id: eventId }),
+        });
+        const rawBody = await res.text();
+        console.log("[get-square-locations] status:", res.status, "body:", rawBody);
+        if (!res.ok) throw new Error(rawBody);
+        const json = JSON.parse(rawBody);
+        const parsedLocations = json.locations ?? [];
+        console.log("[get-square-locations] parsed locations:", parsedLocations);
+        setSquareLocations(parsedLocations);
       } catch {
         setLocationsError("Could not load Square locations. Check your Square connection.");
       }
@@ -2104,9 +2232,10 @@ function SplitsTab({ eventId }: { eventId: string }) {
                   className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
                 >
                   <option value="">-- Select a location --</option>
-                  {squareLocations.map((loc) => (
-                    <option key={loc.id} value={loc.id}>{loc.name}</option>
-                  ))}
+                  {squareLocations.map((loc) => {
+                    console.log("[SplitsTab] rendering location option:", loc);
+                    return <option key={loc.id} value={loc.id}>{loc.name}</option>;
+                  })}
                 </select>
                 {locationSaved[v.vendor_id] && <p className="text-xs text-emerald-400">Saved ✓</p>}
               </div>
