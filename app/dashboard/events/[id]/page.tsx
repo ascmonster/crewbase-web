@@ -1891,25 +1891,6 @@ function RevenueTab({ eventId }: { eventId: string }) {
         </div>
       )}
 
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-zinc-500">Square Integration</span>
-        {squareConnected === true && (
-          <span className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-400">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-            Square Connected
-          </span>
-        )}
-        {squareConnected === false && (
-          <a
-            href={`/api/square/connect?event_id=${eventId}`}
-            className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/10"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="3"/></svg>
-            Connect Square
-          </a>
-        )}
-      </div>
-
       {data.is_past && (
         <div className="rounded-xl border border-zinc-500/20 bg-zinc-500/5 px-4 py-3 text-xs text-zinc-400">
           Final snapshot — event completed
@@ -1937,7 +1918,20 @@ function RevenueTab({ eventId }: { eventId: string }) {
                     {v.business_name.charAt(0).toUpperCase()}
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-white">{v.business_name}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-white">{v.business_name}</p>
+                      {v.square_connected ? (
+                        <span className="flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
+                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                          Square Connected
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 rounded border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-medium text-rose-400">
+                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                          Square Not Connected
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-zinc-500">${(v.vendor_total ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
                   </div>
                 </div>
