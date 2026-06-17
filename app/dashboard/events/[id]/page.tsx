@@ -1466,7 +1466,7 @@ type RevenueTruck = {
   revenue: number;
   error: string | null;
 };
-type RevenueVendor = { vendor_id: string; business_name: string; vendor_total: number; trucks: RevenueTruck[] };
+type RevenueVendor = { vendor_id: string; business_name: string; square_connected: boolean | null; vendor_total: number; trucks: RevenueTruck[] };
 type RevenueData = { event_total: number; is_past: boolean; vendors: RevenueVendor[] };
 
 type SplitRow = {
