@@ -39,10 +39,11 @@ export async function GET(request: NextRequest) {
 
   const oauthUrl = new URL(baseUrl);
   oauthUrl.searchParams.set("client_id", process.env.NEXT_PUBLIC_SQUARE_APPLICATION_ID!);
-  oauthUrl.searchParams.set("scope", SCOPES);
   oauthUrl.searchParams.set("redirect_uri", redirectUrl);
   oauthUrl.searchParams.set("state", state);
-  oauthUrl.searchParams.set("session", "false");
 
-  return NextResponse.redirect(oauthUrl.toString());
+  // Append scope manually so spaces are encoded as %20, not + (URLSearchParams uses +)
+  const finalUrl = `${oauthUrl.toString()}&scope=${SCOPES.replace(/ /g, "%20")}`;
+
+  return NextResponse.redirect(finalUrl);
 }
