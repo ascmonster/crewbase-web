@@ -1406,6 +1406,207 @@ type RevenueTruck = {
 type RevenueVendor = { vendor_id: string; business_name: string; vendor_total: number; trucks: RevenueTruck[] };
 type RevenueData = { event_total: number; is_past: boolean; vendors: RevenueVendor[] };
 
+type VendorSplitState = {
+  vendor_percentage: string;
+  promoter_percentage: string;
+  site_fee: string;
+  settlement_mode: "real_time" | "end_of_day";
+  fee_payer: "vendor" | "promoter" | "split";
+  saving: boolean;
+  error: string | null;
+  saved: boolean;
+};
+
+function PaymentSplitsSection({ eventId, vendors }: { eventId: string; vendors: RevenueVendor[] | undefined }) {
+  const [splits, setSplits] = useState<Record<string, VendorSplitState>>({});
+  const [fetchDone, setFetchDone] = useState(false);
+
+  type SplitRow = {
+    vendor_id: string; vendor_percentage: number; promoter_percentage: number;
+    site_fee_cents: number; settlement_mode: "real_time" | "end_of_day"; fee_payer: "vendor" | "promoter" | "split";
+  };
+
+  function buildState(rows: SplitRow[], vendorList: RevenueVendor[]): Record<string, VendorSplitState> {
+    const map: Record<string, VendorSplitState> = {};
+    for (const v of vendorList) {
+      const row = rows.find(r => r.vendor_id === v.vendor_id);
+      map[v.vendor_id] = {
+        vendor_percentage:   row ? String(row.vendor_percentage)    : "50",
+        promoter_percentage: row ? String(row.promoter_percentage)  : "50",
+        site_fee:            row ? String(row.site_fee_cents / 100) : "0",
+        settlement_mode:     row?.settlement_mode                   ?? "end_of_day",
+        fee_payer:           row?.fee_payer                         ?? "vendor",
+        saving: false, error: null, saved: false,
+      };
+    }
+    return map;
+  }
+
+  useEffect(() => {
+    const vendorList = vendors ?? [];
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("event_vendor_splits")
+          .select("vendor_id, vendor_percentage, promoter_percentage, site_fee_cents, settlement_mode, fee_payer")
+          .eq("event_id", eventId);
+        if (!error) {
+          setSplits(buildState((data as SplitRow[]) ?? [], vendorList));
+        } else {
+          setSplits(buildState([], vendorList));
+        }
+      } catch {
+        setSplits(buildState([], vendorList));
+      } finally {
+        setFetchDone(true);
+      }
+    })();
+  }, [eventId, vendors]);
+
+  function patch(vendorId: string, changes: Partial<VendorSplitState>) {
+    setSplits(prev => ({ ...prev, [vendorId]: { ...prev[vendorId], ...changes } }));
+  }
+
+  async function saveSplit(vendorId: string) {
+    const s = splits[vendorId];
+    const vp = parseFloat(s.vendor_percentage);
+    const pp = parseFloat(s.promoter_percentage);
+    if (!isFinite(vp) || !isFinite(pp) || Math.round(vp + pp) !== 100) {
+      patch(vendorId, { error: "Percentages must add to 100" });
+      return;
+    }
+    patch(vendorId, { saving: true, error: null, saved: false });
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("event_vendor_splits")
+      .upsert(
+        {
+          event_id: eventId,
+          vendor_id: vendorId,
+          square_location_id: null,
+          vendor_percentage: vp,
+          promoter_percentage: pp,
+          royalty_percentage: 0,
+          site_fee_cents: Math.round((parseFloat(s.site_fee) || 0) * 100),
+          settlement_mode: s.settlement_mode,
+          fee_payer: s.fee_payer,
+        },
+        { onConflict: "event_id,vendor_id" }
+      );
+    patch(vendorId, { saving: false, error: error?.message ?? null, saved: !error });
+  }
+
+  if (!fetchDone) return <div className="py-6 text-center text-xs text-zinc-500">Loading split config…</div>;
+
+  const vendorList = vendors ?? [];
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Payment Splits</p>
+      {vendorList.length === 0 && (
+        <p className="text-xs text-zinc-600">No vendors on this event yet.</p>
+      )}
+      {vendorList.map((v) => {
+        const s = splits[v.vendor_id];
+        if (!s) return null;
+        const vp = parseFloat(s.vendor_percentage) || 0;
+        const pp = parseFloat(s.promoter_percentage) || 0;
+        const sumOk = Math.round(vp + pp) === 100;
+        return (
+          <div key={v.vendor_id} className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
+            <p className="text-sm font-semibold text-white">{v.business_name}</p>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Vendor %</label>
+                <input
+                  type="number" min="0" max="100" step="1"
+                  value={s.vendor_percentage}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    patch(v.vendor_id, {
+                      vendor_percentage: val,
+                      promoter_percentage: String(Math.max(0, 100 - (parseFloat(val) || 0))),
+                    });
+                  }}
+                  className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [appearance:textfield]"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Promoter %</label>
+                <input
+                  type="number" min="0" max="100" step="1"
+                  value={s.promoter_percentage}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    patch(v.vendor_id, {
+                      promoter_percentage: val,
+                      vendor_percentage: String(Math.max(0, 100 - (parseFloat(val) || 0))),
+                    });
+                  }}
+                  className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [appearance:textfield]"
+                />
+              </div>
+            </div>
+            {!sumOk && <p className="-mt-1 text-xs text-red-400">Must add to 100%</p>}
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Site Fee</label>
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">$</span>
+                <input
+                  type="number" min="0" step="0.01"
+                  value={s.site_fee}
+                  onChange={(e) => patch(v.vendor_id, { site_fee: e.target.value })}
+                  className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] py-2 pl-7 pr-3 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [appearance:textfield]"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Settlement</label>
+                <select
+                  value={s.settlement_mode}
+                  onChange={(e) => patch(v.vendor_id, { settlement_mode: e.target.value as "real_time" | "end_of_day" })}
+                  className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
+                >
+                  <option value="end_of_day">End of Day</option>
+                  <option value="real_time">Real-time</option>
+                </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Crewbase Fee Paid By</label>
+                <select
+                  value={s.fee_payer}
+                  onChange={(e) => patch(v.vendor_id, { fee_payer: e.target.value as "vendor" | "promoter" | "split" })}
+                  className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
+                >
+                  <option value="vendor">Vendor</option>
+                  <option value="promoter">Promoter</option>
+                  <option value="split">Split</option>
+                </select>
+              </div>
+            </div>
+
+            {s.error && <p className="text-xs text-red-400">{s.error}</p>}
+            {s.saved && !s.error && <p className="text-xs text-emerald-400">Saved</p>}
+
+            <button
+              onClick={() => saveSplit(v.vendor_id)}
+              disabled={s.saving || !sumOk}
+              className="self-start rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-black transition-colors hover:bg-amber-400 disabled:opacity-40"
+            >
+              {s.saving ? "Saving…" : "Save Split"}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function RevenueTab({ eventId }: { eventId: string }) {
   const [data, setData] = useState<RevenueData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1442,6 +1643,17 @@ function RevenueTab({ eventId }: { eventId: string }) {
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-zinc-500">Square Integration</span>
+        <button
+          onClick={() => {/* Square OAuth — coming soon */}}
+          className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/10"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="3"/></svg>
+          Connect Square
+        </button>
+      </div>
+
       {data.is_past && (
         <div className="rounded-xl border border-zinc-500/20 bg-zinc-500/5 px-4 py-3 text-xs text-zinc-400">
           Final snapshot — event completed
@@ -1462,6 +1674,12 @@ function RevenueTab({ eventId }: { eventId: string }) {
       <button onClick={fetchRevenue} className="self-end rounded-lg border border-white/[0.08] px-4 py-2 text-xs font-medium text-zinc-400 hover:text-white transition-colors">
         ↻ Refresh
       </button>
+
+      <PaymentSplitsSection eventId={eventId} vendors={data.vendors ?? []} />
+
+      <div className="border-t border-white/[0.06] pt-2">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-500">Revenue Breakdown</p>
+      </div>
 
       <div className="flex flex-col gap-3">
         {data.vendors.map((v) => (
