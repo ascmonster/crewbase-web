@@ -1621,13 +1621,23 @@ function RevenueTab({ eventId }: { eventId: string }) {
   // Check whether a Square config already exists for this event
   useEffect(() => {
     (async () => {
-      const supabase = createClient();
-      const { data: cfg } = await supabase
-        .from("event_square_config")
-        .select("id")
-        .eq("event_id", eventId)
-        .maybeSingle();
-      setSquareConnected(!!cfg);
+      try {
+        const supabase = createClient();
+        const { data: cfg, error: cfgError } = await supabase
+          .from("event_square_config")
+          .select("id")
+          .eq("event_id", eventId)
+          .maybeSingle();
+        if (cfgError) {
+          console.error("event_square_config query error:", cfgError.message);
+          setSquareConnected(false);
+        } else {
+          setSquareConnected(cfg !== null);
+        }
+      } catch (e) {
+        console.error("event_square_config fetch threw:", e);
+        setSquareConnected(false);
+      }
     })();
   }, [eventId]);
 
@@ -1682,12 +1692,13 @@ function RevenueTab({ eventId }: { eventId: string }) {
 
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-zinc-500">Square Integration</span>
-        {squareConnected === true ? (
+        {squareConnected === true && (
           <span className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-400">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
             Square Connected
           </span>
-        ) : (
+        )}
+        {squareConnected === false && (
           <a
             href={`/api/square/connect?event_id=${eventId}`}
             className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/10"
