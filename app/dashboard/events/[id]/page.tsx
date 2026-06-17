@@ -1994,9 +1994,10 @@ function RevenueTab({ eventId }: { eventId: string }) {
 // ── Splits tab ────────────────────────────────────────────────────────────
 
 function SplitsTab({ eventId }: { eventId: string }) {
-  const [loading,          setLoading]         = useState(true);
-  const [squareConnected,  setSquareConnected]  = useState<boolean | null>(null);
-  const [vendors,          setVendors]          = useState<{ vendor_id: string; business_name: string }[]>([]);
+  const [loading,                setLoading]               = useState(true);
+  const [squareConnected,        setSquareConnected]        = useState<boolean | null>(null);
+  const [vendorSquareConnected,  setVendorSquareConnected]  = useState<Record<string, boolean>>({});
+  const [vendors,                setVendors]                = useState<{ vendor_id: string; business_name: string }[]>([]);
   const [squareLocations,  setSquareLocations]  = useState<SquareLocation[]>([]);
   const [locationsError,   setLocationsError]   = useState<string | null>(null);
   const [vendorLocations,  setVendorLocations]  = useState<Record<string, { square_location_id: string; name: string }>>({});
@@ -2011,9 +2012,14 @@ function SplitsTab({ eventId }: { eventId: string }) {
       try {
         const supabase = createClient();
 
-        // Square connection
-        const { data: cfg } = await supabase.from("event_square_config").select("id").eq("event_id", eventId).maybeSingle();
-        setSquareConnected(cfg !== null);
+        // Square connection — load per-vendor status
+        const { data: cfgRows } = await supabase.from("event_square_config").select("vendor_id").eq("event_id", eventId);
+        const connMap: Record<string, boolean> = {};
+        for (const row of (cfgRows ?? []) as { vendor_id: string | null }[]) {
+          if (row.vendor_id) connMap[row.vendor_id] = true;
+        }
+        setVendorSquareConnected(connMap);
+        setSquareConnected((cfgRows ?? []).length > 0);
 
         // Vendors
         const { data: evRows } = await supabase.from("event_vendors").select("vendor_id").eq("event_id", eventId);
@@ -2196,49 +2202,56 @@ function SplitsTab({ eventId }: { eventId: string }) {
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-zinc-500">Square Integration</span>
         {squareConnected === true && (
-          <span className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-400">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-            Square Connected
+          <span className="text-xs font-medium text-emerald-400">
+            {Object.values(vendorSquareConnected).filter(Boolean).length} vendor{Object.values(vendorSquareConnected).filter(Boolean).length !== 1 ? "s" : ""} connected
           </span>
-        )}
-        {squareConnected === false && (
-          <a
-            href={`/api/square/connect?event_id=${eventId}`}
-            className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/10"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="3"/></svg>
-            Connect Square
-          </a>
         )}
       </div>
 
       {/* Section 2 — Vendor Location Assignment */}
-      {squareConnected === true && (
+      {vendors.length > 0 && (
         <div className="flex flex-col gap-3">
           <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Vendor Locations</p>
           {locationsError && <p className="text-xs text-red-400">{locationsError}</p>}
-          {vendors.length === 0 && <p className="text-xs text-zinc-600">No vendors on this event yet.</p>}
           {vendors.map((v) => (
             <div key={v.vendor_id} className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
-              <p className="text-sm font-semibold text-white">{v.business_name}</p>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Square Location</label>
-                <select
-                  value={vendorLocations[v.vendor_id]?.square_location_id ?? ""}
-                  onChange={(e) => {
-                    const locationId = e.target.value;
-                    const locationName = squareLocations.find(l => l.id === locationId)?.name ?? "";
-                    if (locationId) saveLocation(v.vendor_id, locationId, locationName);
-                  }}
-                  className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
-                >
-                  <option value="">-- Select a location --</option>
-                  {squareLocations.map((loc) => (
-                    <option key={loc.id} value={loc.id}>{loc.name}</option>
-                  ))}
-                </select>
-                {locationSaved[v.vendor_id] && <p className="text-xs text-emerald-400">Saved ✓</p>}
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-white">{v.business_name}</p>
+                {vendorSquareConnected[v.vendor_id] ? (
+                  <span className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400 shrink-0">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                    Square Connected
+                  </span>
+                ) : (
+                  <a
+                    href={`/api/square/connect?event_id=${eventId}&vendor_id=${v.vendor_id}`}
+                    className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 px-2.5 py-1 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/10 shrink-0"
+                  >
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="3"/></svg>
+                    Connect Square
+                  </a>
+                )}
               </div>
+              {vendorSquareConnected[v.vendor_id] && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Square Location</label>
+                  <select
+                    value={vendorLocations[v.vendor_id]?.square_location_id ?? ""}
+                    onChange={(e) => {
+                      const locationId = e.target.value;
+                      const locationName = squareLocations.find(l => l.id === locationId)?.name ?? "";
+                      if (locationId) saveLocation(v.vendor_id, locationId, locationName);
+                    }}
+                    className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
+                  >
+                    <option value="">-- Select a location --</option>
+                    {squareLocations.map((loc) => (
+                      <option key={loc.id} value={loc.id}>{loc.name}</option>
+                    ))}
+                  </select>
+                  {locationSaved[v.vendor_id] && <p className="text-xs text-emerald-400">Saved ✓</p>}
+                </div>
+              )}
             </div>
           ))}
         </div>

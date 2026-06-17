@@ -17,10 +17,12 @@ export async function GET(request: NextRequest) {
   // Decode state
   let event_id: string;
   let promoter_id: string | null;
+  let vendor_id: string | null;
   try {
     const decoded = JSON.parse(Buffer.from(stateParam, "base64").toString("utf-8"));
     event_id = decoded.event_id;
     promoter_id = decoded.promoter_id ?? null;
+    vendor_id = decoded.vendor_id ?? null;
   } catch {
     return NextResponse.redirect(`${origin}/dashboard?square_error=invalid_state`);
   }
@@ -93,11 +95,12 @@ export async function GET(request: NextRequest) {
     {
       event_id,
       promoter_id,
+      vendor_id,
       square_access_token: tokenData.access_token,
       square_merchant_id: tokenData.merchant_id ?? null,
       token_expires_at: expiresAt,
     },
-    { onConflict: "event_id" }
+    { onConflict: "event_id,vendor_id" }
   );
 
   if (dbError) {
