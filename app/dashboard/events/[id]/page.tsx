@@ -1406,6 +1406,15 @@ type RevenueTruck = {
 type RevenueVendor = { vendor_id: string; business_name: string; vendor_total: number; trucks: RevenueTruck[] };
 type RevenueData = { event_total: number; is_past: boolean; vendors: RevenueVendor[] };
 
+type SplitRow = {
+  vendor_id: string;
+  vendor_percentage: number;
+  promoter_percentage: number;
+  site_fee_cents: number;
+  settlement_mode: "real_time" | "end_of_day";
+  fee_payer: "vendor" | "promoter" | "split";
+};
+
 type VendorSplitState = {
   vendor_percentage: string;
   promoter_percentage: string;
@@ -1420,11 +1429,6 @@ type VendorSplitState = {
 function PaymentSplitsSection({ eventId, vendors }: { eventId: string; vendors: RevenueVendor[] | undefined }) {
   const [splits, setSplits] = useState<Record<string, VendorSplitState>>({});
   const [fetchDone, setFetchDone] = useState(false);
-
-  type SplitRow = {
-    vendor_id: string; vendor_percentage: number; promoter_percentage: number;
-    site_fee_cents: number; settlement_mode: "real_time" | "end_of_day"; fee_payer: "vendor" | "promoter" | "split";
-  };
 
   function buildState(rows: SplitRow[], vendorList: RevenueVendor[]): Record<string, VendorSplitState> {
     const map: Record<string, VendorSplitState> = {};
@@ -1462,7 +1466,7 @@ function PaymentSplitsSection({ eventId, vendors }: { eventId: string; vendors: 
         setFetchDone(true);
       }
     })();
-  }, [eventId, vendors]);
+  }, [eventId]); // vendors intentionally omitted — stable after data loads, re-fetch on eventId change only
 
   function patch(vendorId: string, changes: Partial<VendorSplitState>) {
     setSplits(prev => ({ ...prev, [vendorId]: { ...prev[vendorId], ...changes } }));
@@ -1663,7 +1667,7 @@ function RevenueTab({ eventId }: { eventId: string }) {
       <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-6 py-6 text-center">
         <p className="text-xs text-zinc-500 uppercase tracking-widest mb-2">Total Event Revenue</p>
         <p className="text-4xl font-bold text-white">
-          ${data.event_total.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+          ${(data.event_total ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}
         </p>
         <p className="text-xs text-zinc-500 mt-2">
           {data.vendors.length} vendor{data.vendors.length !== 1 ? "s" : ""}
@@ -1687,7 +1691,7 @@ function RevenueTab({ eventId }: { eventId: string }) {
             <div className="flex items-center justify-between mb-3">
               <span className="font-semibold text-white text-sm">{v.business_name}</span>
               <span className="text-sm font-bold text-white">
-                ${v.vendor_total.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                ${(v.vendor_total ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}
               </span>
             </div>
             <div className="flex flex-col gap-1.5">
@@ -1702,7 +1706,7 @@ function RevenueTab({ eventId }: { eventId: string }) {
                     }
                   </div>
                   <span className="text-zinc-400">
-                    ${t.revenue.toLocaleString("en-US", { minimumFractionDigits: 2 })} · {t.transactions} txns
+                    ${(t.revenue ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2 })} · {t.transactions ?? 0} txns
                   </span>
                 </div>
               ))}
