@@ -2238,11 +2238,11 @@ function SplitsTab({ eventId }: { eventId: string }) {
         </div>
       )}
 
-      {/* Section 3 — Split Settings (only for vendors with a location) */}
-      {vendorsWithLocation.length > 0 && (
+      {/* Section 3 — Split Settings */}
+      {vendors.length > 0 && (
         <div className="flex flex-col gap-3">
           <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Split Settings</p>
-          {vendorsWithLocation.map((v) => {
+          {vendors.map((v) => {
             const defaultSt: VendorSplitState = { vendor_percentage: "50", promoter_percentage: "50", site_fee: "0", settlement_mode: "end_of_day", fee_payer: "vendor", square_location_id: null, saving: false, error: null, saved: false };
             const s = splits[v.vendor_id] ?? defaultSt;
             const vp = parseFloat(s.vendor_percentage) || 0;
@@ -2330,11 +2330,11 @@ function SplitsTab({ eventId }: { eventId: string }) {
         </div>
       )}
 
-      {/* Section 4 — Sync & Breakdown */}
-      {vendorsWithLocation.length > 0 && (
+      {/* Section 4 — Transaction Breakdown */}
+      {vendors.length > 0 && (
         <div className="flex flex-col gap-4">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Transactions</p>
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Transaction Breakdown</p>
             <button
               onClick={syncTransactions}
               disabled={syncing}
@@ -2354,7 +2354,13 @@ function SplitsTab({ eventId }: { eventId: string }) {
               {syncToast}
             </div>
           )}
-          {vendorsWithLocation.map((v) => {
+          {Object.keys(txData).length === 0 && (
+            <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-8 text-center">
+              <p className="text-sm text-zinc-500">No transactions synced yet</p>
+              <p className="text-xs text-zinc-600 mt-1">Sync from Square to see a breakdown</p>
+            </div>
+          )}
+          {vendors.map((v) => {
             const tx = txData[v.vendor_id];
             if (!tx || tx.total_cents === 0) return null;
             const s = splits[v.vendor_id];
