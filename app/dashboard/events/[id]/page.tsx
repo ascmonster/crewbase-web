@@ -1615,6 +1615,32 @@ function RevenueTab({ eventId }: { eventId: string }) {
   const [data, setData] = useState<RevenueData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [squareConnected, setSquareConnected] = useState<boolean | null>(null);
+  const [squareToast, setSquareToast] = useState(false);
+
+  // Check whether a Square config already exists for this event
+  useEffect(() => {
+    (async () => {
+      const supabase = createClient();
+      const { data: cfg } = await supabase
+        .from("event_square_config")
+        .select("id")
+        .eq("event_id", eventId)
+        .maybeSingle();
+      setSquareConnected(!!cfg);
+    })();
+  }, [eventId]);
+
+  // Show success toast if redirected back from Square OAuth
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("square") === "connected") {
+      setSquareConnected(true);
+      setSquareToast(true);
+      const t = setTimeout(() => setSquareToast(false), 4000);
+      return () => clearTimeout(t);
+    }
+  }, []);
 
   async function fetchRevenue() {
     setLoading(true);
@@ -1647,15 +1673,29 @@ function RevenueTab({ eventId }: { eventId: string }) {
 
   return (
     <div className="flex flex-col gap-4">
+      {squareToast && (
+        <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs font-medium text-emerald-400">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+          Square account connected successfully!
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-zinc-500">Square Integration</span>
-        <a
-          href={`/api/square/connect?event_id=${eventId}`}
-          className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/10"
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="3"/></svg>
-          Connect Square
-        </a>
+        {squareConnected === true ? (
+          <span className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-400">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            Square Connected
+          </span>
+        ) : (
+          <a
+            href={`/api/square/connect?event_id=${eventId}`}
+            className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/10"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="3"/></svg>
+            Connect Square
+          </a>
+        )}
       </div>
 
       {data.is_past && (
