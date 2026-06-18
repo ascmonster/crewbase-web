@@ -11,7 +11,6 @@ const SCOPES = [
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const event_id = searchParams.get("event_id");
-  const vendor_id = searchParams.get("vendor_id");
 
   if (!event_id) {
     return NextResponse.json({ error: "Missing event_id" }, { status: 400 });
@@ -32,7 +31,7 @@ export async function GET(request: NextRequest) {
   const promoter_id = user?.id ?? null;
 
   const state = Buffer.from(
-    JSON.stringify({ event_id, promoter_id, vendor_id })
+    JSON.stringify({ event_id, promoter_id })
   ).toString("base64");
 
   const isSandbox = process.env.SQUARE_ENVIRONMENT !== "production";
