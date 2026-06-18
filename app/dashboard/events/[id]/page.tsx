@@ -2060,7 +2060,7 @@ function SplitsTab({ eventId }: { eventId: string }) {
         const { data: { session } } = await supabase.auth.getSession();
         if (session && vendorIds.length > 0) {
           await Promise.all(
-            vendorIds.filter((id: string) => connMap[id]).map(async (vendorId) => {
+            vendorIds.filter((id: string) => connMap[id]).map(async (vendorId: string) => {
               try {
                 const res = await fetch(
                   `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/get-square-locations`,
