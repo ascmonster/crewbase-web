@@ -2061,9 +2061,22 @@ function RevenueTab({ eventId }: { eventId: string }) {
 
 // ── Splits tab ────────────────────────────────────────────────────────────
 
+type EventVendorWithCategory = {
+  vendor_id: string;
+  business_name: string;
+  category: string | null;
+};
+
+const SPLIT_DEF: VendorSplitState = {
+  vendor_percentage: "50", promoter_percentage: "50", site_fee: "0",
+  settlement_mode: "end_of_day", fee_payer: "vendor",
+  square_location_id: null, saving: false, error: null, saved: false,
+};
+
 function SplitsTab({ eventId }: { eventId: string }) {
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
+  const [vendors, setVendors] = useState<EventVendorWithCategory[]>([]);
   const [revenue, setRevenue] = useState<RevenueData | null>(null);
   const [splits,  setSplits]  = useState<Record<string, VendorSplitState>>({});
 
@@ -2072,7 +2085,28 @@ function SplitsTab({ eventId }: { eventId: string }) {
       try {
         const supabase = createClient();
 
-        // Fetch vendor + revenue data
+        // 1. Vendors with category
+        const { data: evRows } = await supabase
+          .from("event_vendors")
+          .select("vendor_id, category")
+          .eq("event_id", eventId);
+        const vendorIds = (evRows ?? []).map((r: { vendor_id: string }) => r.vendor_id);
+        const categoryByVendor: Record<string, string | null> = {};
+        for (const r of evRows ?? []) categoryByVendor[r.vendor_id] = r.category ?? null;
+
+        if (vendorIds.length > 0) {
+          const { data: profiles } = await supabase
+            .from("vendor_profiles")
+            .select("user_id, business_name")
+            .in("user_id", vendorIds);
+          setVendors((profiles ?? []).map((p: { user_id: string; business_name: string }) => ({
+            vendor_id: p.user_id,
+            business_name: p.business_name,
+            category: categoryByVendor[p.user_id] ?? null,
+          })));
+        }
+
+        // 2. Revenue data
         const { data: revenueData, error: revErr } = await supabase.functions.invoke(
           "vendor-event-revenue",
           { body: { event_id: eventId } }
@@ -2080,28 +2114,24 @@ function SplitsTab({ eventId }: { eventId: string }) {
         if (revErr) throw revErr;
         setRevenue(revenueData as RevenueData);
 
-        // Pre-populate splits from DB
-        const vendorIds = (revenueData as RevenueData).vendors.map((v: RevenueVendor) => v.vendor_id);
-        if (vendorIds.length > 0) {
-          const { data: rows } = await supabase
-            .from("event_vendor_splits")
-            .select("vendor_id, vendor_percentage, promoter_percentage, site_fee_cents, settlement_mode, fee_payer")
-            .eq("event_id", eventId)
-            .in("vendor_id", vendorIds);
-          const map: Record<string, VendorSplitState> = {};
-          for (const row of rows ?? []) {
-            map[row.vendor_id] = {
-              vendor_percentage:   String(row.vendor_percentage ?? 50),
-              promoter_percentage: String(row.promoter_percentage ?? 50),
-              site_fee:            String((row.site_fee_cents ?? 0) / 100),
-              settlement_mode:     row.settlement_mode ?? "end_of_day",
-              fee_payer:           row.fee_payer ?? "vendor",
-              square_location_id:  null,
-              saving: false, error: null, saved: false,
-            };
-          }
-          setSplits(map);
+        // 3. Category splits
+        const { data: splitRows } = await supabase
+          .from("event_category_splits")
+          .select("category, vendor_percentage, promoter_percentage, site_fee_cents, settlement_mode, fee_payer")
+          .eq("event_id", eventId);
+        const splitMap: Record<string, VendorSplitState> = {};
+        for (const row of splitRows ?? []) {
+          splitMap[row.category] = {
+            vendor_percentage:   String(row.vendor_percentage ?? 50),
+            promoter_percentage: String(row.promoter_percentage ?? 50),
+            site_fee:            String((row.site_fee_cents ?? 0) / 100),
+            settlement_mode:     row.settlement_mode ?? "end_of_day",
+            fee_payer:           row.fee_payer ?? "vendor",
+            square_location_id:  null,
+            saving: false, error: null, saved: false,
+          };
         }
+        setSplits(splitMap);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load");
       } finally {
@@ -2110,42 +2140,53 @@ function SplitsTab({ eventId }: { eventId: string }) {
     })();
   }, [eventId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function patch(vendorId: string, changes: Partial<VendorSplitState>) {
-    setSplits(prev => ({ ...prev, [vendorId]: { ...prev[vendorId], ...changes } }));
+  function patch(cat: string, changes: Partial<VendorSplitState>) {
+    setSplits(prev => ({ ...prev, [cat]: { ...prev[cat], ...changes } }));
   }
 
-  async function saveSplit(vendorId: string) {
-    const def: VendorSplitState = { vendor_percentage: "50", promoter_percentage: "50", site_fee: "0", settlement_mode: "end_of_day", fee_payer: "vendor", square_location_id: null, saving: false, error: null, saved: false };
-    const s = splits[vendorId] ?? def;
+  async function saveSplit(cat: string) {
+    const s = splits[cat] ?? SPLIT_DEF;
     const vp = parseFloat(s.vendor_percentage);
     const pp = parseFloat(s.promoter_percentage);
     if (!isFinite(vp) || !isFinite(pp) || Math.round(vp + pp) !== 100) {
-      patch(vendorId, { error: "Percentages must add to 100" });
+      patch(cat, { error: "Percentages must add to 100" });
       return;
     }
-    patch(vendorId, { saving: true, error: null, saved: false });
+    patch(cat, { saving: true, error: null, saved: false });
     const { error } = await createClient()
-      .from("event_vendor_splits")
+      .from("event_category_splits")
       .upsert(
         {
           event_id: eventId,
-          vendor_id: vendorId,
+          category: cat,
           vendor_percentage: vp,
           promoter_percentage: pp,
           site_fee_cents: Math.round((parseFloat(s.site_fee) || 0) * 100),
           settlement_mode: s.settlement_mode,
           fee_payer: s.fee_payer,
         },
-        { onConflict: "vendor_id,event_id" }
+        { onConflict: "event_id,category" }
       );
-    patch(vendorId, { saving: false, error: error?.message ?? null, saved: !error });
-    if (!error) setTimeout(() => patch(vendorId, { saved: false }), 2000);
+    patch(cat, { saving: false, error: error?.message ?? null, saved: !error });
+    if (!error) setTimeout(() => patch(cat, { saved: false }), 2000);
   }
 
   if (loading) return <div className="py-16 text-center text-sm text-zinc-500">Loading…</div>;
   if (error)   return <div className="py-16 text-center text-sm text-red-400">{error}</div>;
 
-  const vendors = revenue?.vendors ?? [];
+  // Derive unique categories, group vendors
+  const categories = Array.from(new Set(vendors.map(v => v.category ?? "Other"))).sort();
+  const vendorsByCategory: Record<string, EventVendorWithCategory[]> = {};
+  for (const v of vendors) {
+    const cat = v.category ?? "Other";
+    (vendorsByCategory[cat] ??= []).push(v);
+  }
+
+  // Revenue indexed by vendor_id
+  const revenueByVendor: Record<string, RevenueVendor> = {};
+  for (const v of revenue?.vendors ?? []) revenueByVendor[v.vendor_id] = v;
+
+  const hasAnyRevenue = (revenue?.vendors ?? []).some(v => (v.vendor_total ?? 0) > 0);
   const fmtD = (n: number) => `$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
 
   return (
@@ -2157,12 +2198,12 @@ function SplitsTab({ eventId }: { eventId: string }) {
         {vendors.length === 0 && (
           <p className="text-xs text-zinc-600">No vendors on this event yet.</p>
         )}
-        {vendors.map((v) => {
-          const def: VendorSplitState = { vendor_percentage: "50", promoter_percentage: "50", site_fee: "0", settlement_mode: "end_of_day", fee_payer: "vendor", square_location_id: null, saving: false, error: null, saved: false };
-          const s = splits[v.vendor_id] ?? def;
+        {categories.map((cat) => {
+          const s = splits[cat] ?? SPLIT_DEF;
+          const catVendors = vendorsByCategory[cat] ?? [];
           return (
-            <div key={v.vendor_id} className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
-              <p className="text-sm font-semibold text-white">{v.business_name}</p>
+            <div key={cat} className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
+              <p className="text-sm font-semibold text-white">{cat}</p>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
@@ -2172,7 +2213,7 @@ function SplitsTab({ eventId }: { eventId: string }) {
                     value={s.vendor_percentage}
                     onChange={(e) => {
                       const val = e.target.value;
-                      patch(v.vendor_id, {
+                      patch(cat, {
                         vendor_percentage:   val,
                         promoter_percentage: String(Math.max(0, 100 - (parseFloat(val) || 0))),
                       });
@@ -2198,7 +2239,7 @@ function SplitsTab({ eventId }: { eventId: string }) {
                   <input
                     type="number" min="0" step="0.01"
                     value={s.site_fee}
-                    onChange={(e) => patch(v.vendor_id, { site_fee: e.target.value })}
+                    onChange={(e) => patch(cat, { site_fee: e.target.value })}
                     className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] py-2 pl-7 pr-3 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [appearance:textfield]"
                   />
                 </div>
@@ -2209,7 +2250,7 @@ function SplitsTab({ eventId }: { eventId: string }) {
                   <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Settlement</label>
                   <select
                     value={s.settlement_mode}
-                    onChange={(e) => patch(v.vendor_id, { settlement_mode: e.target.value as "real_time" | "end_of_day" })}
+                    onChange={(e) => patch(cat, { settlement_mode: e.target.value as "real_time" | "end_of_day" })}
                     className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
                   >
                     <option value="end_of_day">End of Day</option>
@@ -2220,7 +2261,7 @@ function SplitsTab({ eventId }: { eventId: string }) {
                   <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Crewbase Fee Paid By</label>
                   <select
                     value={s.fee_payer}
-                    onChange={(e) => patch(v.vendor_id, { fee_payer: e.target.value as "vendor" | "promoter" | "split" })}
+                    onChange={(e) => patch(cat, { fee_payer: e.target.value as "vendor" | "promoter" | "split" })}
                     className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
                   >
                     <option value="vendor">Vendor</option>
@@ -2233,12 +2274,18 @@ function SplitsTab({ eventId }: { eventId: string }) {
               {s.error && <p className="text-xs text-red-400">{s.error}</p>}
               {s.saved && !s.error && <p className="text-xs text-emerald-400">Saved ✓</p>}
               <button
-                onClick={() => saveSplit(v.vendor_id)}
+                onClick={() => saveSplit(cat)}
                 disabled={s.saving}
                 className="self-start rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-black transition-colors hover:bg-amber-400 disabled:opacity-40"
               >
                 {s.saving ? "Saving…" : "Save Split"}
               </button>
+
+              {catVendors.length > 0 && (
+                <p className="text-xs text-zinc-600">
+                  {catVendors.map(v => v.business_name).join(", ")}
+                </p>
+              )}
             </div>
           );
         })}
@@ -2247,55 +2294,67 @@ function SplitsTab({ eventId }: { eventId: string }) {
       {/* SECTION 2 — TRANSACTION BREAKDOWN */}
       <div className="flex flex-col gap-3">
         <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Transaction Breakdown</p>
-        {vendors.length === 0 || vendors.every(v => !(v.vendor_total ?? 0)) ? (
+        {!hasAnyRevenue ? (
           <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-8 text-center">
             <p className="text-sm text-zinc-500">No transaction data yet — check Revenue tab</p>
           </div>
         ) : (
-          <div className="flex flex-col gap-3">
-            {vendors.map((v) => {
-              const total = v.vendor_total ?? 0;
-              if (!total) return null;
-              const s = splits[v.vendor_id];
-              const vp = s ? (parseFloat(s.vendor_percentage) || 0) : 50;
-              const pp = s ? (parseFloat(s.promoter_percentage) || 0) : 50;
-              const vendorCut = total * (vp / 100);
-              const promoterCut = total * (pp / 100);
-              const hasCash = v.trucks.some(t => t.square_linked && t.revenue > 0);
+          <div className="flex flex-col gap-5">
+            {categories.map((cat) => {
+              const catVendors = vendorsByCategory[cat] ?? [];
+              const catRevVendors = catVendors
+                .map(v => revenueByVendor[v.vendor_id])
+                .filter((rv): rv is RevenueVendor => !!rv && (rv.vendor_total ?? 0) > 0);
+              if (catRevVendors.length === 0) return null;
+
+              const splitSet = !!splits[cat];
+              const vp = splitSet ? (parseFloat(splits[cat].vendor_percentage) || 0) : null;
+              const pp = splitSet ? (parseFloat(splits[cat].promoter_percentage) || 0) : null;
+              const catTotal = catRevVendors.reduce((sum, v) => sum + (v.vendor_total ?? 0), 0);
+
               return (
-                <div key={v.vendor_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 flex flex-col gap-1.5">
-                  <p className="text-sm font-semibold text-white mb-1">{v.business_name}</p>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-zinc-400">Total Sales</span>
-                    <span className="text-white font-medium">{fmtD(total)}</span>
+                <div key={cat} className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between pb-1 border-b border-white/[0.06]">
+                    <p className="text-sm font-semibold text-white">{cat}</p>
+                    <p className="text-sm font-semibold text-white">{fmtD(catTotal)}</p>
                   </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-zinc-400">Vendor Cut ({vp}%)</span>
-                    <span className="text-zinc-300">{fmtD(vendorCut)}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-zinc-400">Promoter Cut ({pp}%)</span>
-                    <span className="text-zinc-300">{fmtD(promoterCut)}</span>
-                  </div>
-                  {v.trucks.length > 0 && (
-                    <>
-                      <div className="my-0.5 border-t border-white/[0.06]" />
-                      {v.trucks.map((t) => (
-                        <div key={t.truck_id} className="flex justify-between text-xs">
-                          <span className="text-zinc-500">{t.truck_name}</span>
-                          <span className="text-zinc-400">
-                            {fmtD(t.revenue)} · {t.transactions} txn{t.transactions !== 1 ? "s" : ""}
-                          </span>
+                  {catRevVendors.map((rv) => {
+                    const total = rv.vendor_total ?? 0;
+                    return (
+                      <div key={rv.vendor_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 flex flex-col gap-1.5">
+                        <p className="text-xs font-semibold text-zinc-300">{rv.business_name}</p>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-zinc-400">Total Sales</span>
+                          <span className="text-white">{fmtD(total)}</span>
                         </div>
-                      ))}
-                    </>
-                  )}
-                  {hasCash && (
-                    <div className="mt-1 flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                      Collect cash from vendor manually
-                    </div>
-                  )}
+                        {vp !== null && pp !== null ? (
+                          <>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-zinc-400">Vendor Cut ({vp}%)</span>
+                              <span className="text-zinc-300">{fmtD(total * (vp / 100))}</span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-zinc-400">Promoter Cut ({pp}%)</span>
+                              <span className="text-zinc-300">{fmtD(total * (pp / 100))}</span>
+                            </div>
+                          </>
+                        ) : (
+                          <p className="text-xs text-zinc-600 italic">Set split percentages above first</p>
+                        )}
+                        {rv.trucks.length > 0 && (
+                          <>
+                            <div className="my-0.5 border-t border-white/[0.06]" />
+                            {rv.trucks.map((t) => (
+                              <div key={t.truck_id} className="flex justify-between text-xs">
+                                <span className="text-zinc-500">{t.truck_name}</span>
+                                <span className="text-zinc-400">{fmtD(t.revenue)} · {t.transactions} txn{t.transactions !== 1 ? "s" : ""}</span>
+                              </div>
+                            ))}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
