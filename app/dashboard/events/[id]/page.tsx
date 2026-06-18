@@ -2448,9 +2448,9 @@ function SplitsTab({ eventId }: { eventId: string }) {
           <span className="rounded-full border border-zinc-500/40 bg-[#0a0a0a] px-3 py-1 text-xs font-semibold text-zinc-500">Coming Soon</span>
         </div>
         <div className="pointer-events-none select-none flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-6 opacity-40">
-          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Pay Vendors</p>
-          <button disabled className="self-start rounded-lg border border-white/[0.08] px-4 py-2 text-xs font-medium text-zinc-500">Transfer Vendor Payments</button>
-          <p className="text-xs text-zinc-600">Automatic payouts to vendor Square accounts — coming soon</p>
+          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Settle Event</p>
+          <button disabled className="self-start rounded-lg border border-white/[0.08] px-4 py-2 text-xs font-medium text-zinc-500">Settle Event</button>
+          <p className="text-xs text-zinc-600">Finalises the event, confirms all splits and generates Crewbase invoice — coming soon</p>
         </div>
       </div>
 
