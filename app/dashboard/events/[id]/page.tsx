@@ -1998,8 +1998,8 @@ function SplitsTab({ eventId }: { eventId: string }) {
   const [squareConnected,        setSquareConnected]        = useState<boolean | null>(null);
   const [vendorSquareConnected,  setVendorSquareConnected]  = useState<Record<string, boolean>>({});
   const [vendors,                setVendors]                = useState<{ vendor_id: string; business_name: string }[]>([]);
-  const [squareLocations,  setSquareLocations]  = useState<SquareLocation[]>([]);
-  const [locationsError,   setLocationsError]   = useState<string | null>(null);
+  const [squareLocations,  setSquareLocations]  = useState<Record<string, SquareLocation[]>>({});
+  const [locationsError,   setLocationsError]   = useState<Record<string, string>>({});
   const [vendorLocations,  setVendorLocations]  = useState<Record<string, { square_location_id: string; name: string }>>({});
   const [locationSaved,    setLocationSaved]    = useState<Record<string, boolean>>({});
   const [splits,           setSplits]           = useState<Record<string, VendorSplitState>>({});
@@ -2055,6 +2055,30 @@ function SplitsTab({ eventId }: { eventId: string }) {
 
         // Transactions
         await loadTxDataWith(supabase);
+
+        // Square locations — per vendor (parallel)
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session && vendorIds.length > 0) {
+          await Promise.all(
+            vendorIds.filter(id => connMap[id]).map(async (vendorId) => {
+              try {
+                const res = await fetch(
+                  `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/get-square-locations`,
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+                    body: JSON.stringify({ event_id: eventId, vendor_id: vendorId }),
+                  }
+                );
+                if (!res.ok) throw new Error(await res.text());
+                const json = await res.json();
+                setSquareLocations(prev => ({ ...prev, [vendorId]: json.locations ?? [] }));
+              } catch {
+                setLocationsError(prev => ({ ...prev, [vendorId]: "Could not load Square locations." }));
+              }
+            })
+          );
+        }
       } catch (e) {
         console.error("SplitsTab load error:", e);
       } finally {
@@ -2062,30 +2086,6 @@ function SplitsTab({ eventId }: { eventId: string }) {
       }
     })();
   }, [eventId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!squareConnected) return;
-    (async () => {
-      try {
-        const supabase = createClient();
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return;
-        const res = await fetch(
-          `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/get-square-locations`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-            body: JSON.stringify({ event_id: eventId }),
-          }
-        );
-        if (!res.ok) throw new Error(await res.text());
-        const json = await res.json();
-        setSquareLocations(json.locations ?? []);
-      } catch {
-        setLocationsError("Could not load Square locations. Check your Square connection.");
-      }
-    })();
-  }, [eventId, squareConnected]);
 
   async function loadTxDataWith(supabase: ReturnType<typeof createClient>) {
     const { data: txRows } = await supabase.from("square_transactions").select("vendor_id, amount_cents, payment_method").eq("event_id", eventId);
@@ -2208,7 +2208,6 @@ function SplitsTab({ eventId }: { eventId: string }) {
       {vendors.length > 0 && (
         <div className="flex flex-col gap-3">
           <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Vendor Locations</p>
-          {locationsError && <p className="text-xs text-red-400">{locationsError}</p>}
           {vendors.map((v) => (
             <div key={v.vendor_id} className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
               <div className="flex items-center justify-between gap-3">
@@ -2235,16 +2234,17 @@ function SplitsTab({ eventId }: { eventId: string }) {
                     value={vendorLocations[v.vendor_id]?.square_location_id ?? ""}
                     onChange={(e) => {
                       const locationId = e.target.value;
-                      const locationName = squareLocations.find(l => l.id === locationId)?.name ?? "";
+                      const locationName = (squareLocations[v.vendor_id] ?? []).find(l => l.id === locationId)?.name ?? "";
                       if (locationId) saveLocation(v.vendor_id, locationId, locationName);
                     }}
                     className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
                   >
                     <option value="">-- Select a location --</option>
-                    {squareLocations.map((loc) => (
+                    {(squareLocations[v.vendor_id] ?? []).map((loc) => (
                       <option key={loc.id} value={loc.id}>{loc.name}</option>
                     ))}
                   </select>
+                  {locationsError[v.vendor_id] && <p className="text-xs text-red-400">{locationsError[v.vendor_id]}</p>}
                   {locationSaved[v.vendor_id] && <p className="text-xs text-emerald-400">Saved ✓</p>}
                 </div>
               )}
