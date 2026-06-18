@@ -2105,27 +2105,23 @@ function SplitsTab({ eventId }: { eventId: string }) {
 
   async function saveLocation(vendorId: string, locationId: string, locationName: string) {
     const supabase = createClient();
-    const { error } = await supabase.from("vendor_locations").upsert(
-      { event_id: eventId, vendor_id: vendorId, square_location_id: locationId, name: locationName },
-      { onConflict: "event_id,vendor_id" }
+    const { error } = await supabase.from("event_vendor_splits").upsert(
+      {
+        vendor_id: vendorId,
+        event_id: eventId,
+        square_location_id: locationId,
+        vendor_percentage: 50,
+        promoter_percentage: 50,
+        site_fee_cents: 0,
+        settlement_mode: "end_of_day",
+        fee_payer: "vendor",
+      },
+      { onConflict: "vendor_id,event_id" }
     );
     if (!error) {
       setVendorLocations(prev => ({ ...prev, [vendorId]: { square_location_id: locationId, name: locationName } }));
       setLocationSaved(prev => ({ ...prev, [vendorId]: true }));
       setTimeout(() => setLocationSaved(prev => ({ ...prev, [vendorId]: false })), 2000);
-        await supabase.from("event_vendor_splits").upsert(
-        {
-          vendor_id: vendorId,
-          event_id: eventId,
-          square_location_id: locationId,
-          vendor_percentage: 50,
-          promoter_percentage: 50,
-          site_fee_cents: 0,
-          settlement_mode: "end_of_day",
-          fee_payer: "vendor",
-        },
-        { onConflict: "vendor_id,event_id" }
-      );
     }
   }
 
