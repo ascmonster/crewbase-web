@@ -1557,6 +1557,7 @@ type VendorSplitState = {
   saving: boolean;
   error: string | null;
   saved: boolean;
+  locked: boolean;
 };
 
 type VendorTxSummary = {
@@ -1589,7 +1590,7 @@ function PaymentSplitsSection({ eventId, vendors, txSummaries, squareConnected }
         settlement_mode:     row?.settlement_mode                   ?? "end_of_day",
         fee_payer:           row?.fee_payer                         ?? "vendor",
         square_location_id:  row?.square_location_id               ?? null,
-        saving: false, error: null, saved: false,
+        saving: false, error: null, saved: false, locked: false,
       };
     }
     return map;
@@ -2070,7 +2071,7 @@ type EventVendorWithCategory = {
 const SPLIT_DEF: VendorSplitState = {
   vendor_percentage: "50", promoter_percentage: "50", site_fee: "0",
   settlement_mode: "end_of_day", fee_payer: "vendor",
-  square_location_id: null, saving: false, error: null, saved: false,
+  square_location_id: null, saving: false, error: null, saved: false, locked: false,
 };
 
 function SplitsTab({ eventId }: { eventId: string }) {
@@ -2128,7 +2129,7 @@ function SplitsTab({ eventId }: { eventId: string }) {
             settlement_mode:     row.settlement_mode ?? "end_of_day",
             fee_payer:           row.fee_payer ?? "vendor",
             square_location_id:  null,
-            saving: false, error: null, saved: false,
+            saving: false, error: null, saved: false, locked: true,
           };
         }
         setSplits(splitMap);
@@ -2167,8 +2168,11 @@ function SplitsTab({ eventId }: { eventId: string }) {
         },
         { onConflict: "event_id,category" }
       );
-    patch(cat, { saving: false, error: error?.message ?? null, saved: !error });
-    if (!error) setTimeout(() => patch(cat, { saved: false }), 2000);
+    if (error) {
+      patch(cat, { saving: false, error: error.message });
+    } else {
+      patch(cat, { saving: false, error: null, saved: false, locked: true });
+    }
   }
 
   if (loading) return <div className="py-16 text-center text-sm text-zinc-500">Loading…</div>;
@@ -2201,6 +2205,45 @@ function SplitsTab({ eventId }: { eventId: string }) {
         {categories.map((cat) => {
           const s = splits[cat] ?? SPLIT_DEF;
           const catVendors = vendorsByCategory[cat] ?? [];
+          const feePayer = s.fee_payer === "vendor" ? "Vendor" : s.fee_payer === "promoter" ? "Promoter" : "Split Equally";
+          const settlement = s.settlement_mode === "end_of_day" ? "End of Day" : "Real Time";
+
+          if (s.locked) {
+            return (
+              <div key={cat} className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold text-white">{cat}</p>
+                  <span className="text-xs text-zinc-500">🔒 Split Locked</span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-medium uppercase tracking-wider text-zinc-600">Vendor %</span>
+                    <span className="text-sm text-zinc-300">{s.vendor_percentage}%</span>
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-medium uppercase tracking-wider text-zinc-600">Promoter %</span>
+                    <span className="text-sm text-zinc-300">{s.promoter_percentage}%</span>
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-medium uppercase tracking-wider text-zinc-600">Site Fee</span>
+                    <span className="text-sm text-zinc-300">${parseFloat(s.site_fee || "0").toFixed(2)}</span>
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-medium uppercase tracking-wider text-zinc-600">Settlement</span>
+                    <span className="text-sm text-zinc-300">{settlement}</span>
+                  </div>
+                  <div className="flex flex-col gap-0.5 col-span-2">
+                    <span className="text-xs font-medium uppercase tracking-wider text-zinc-600">Crewbase Fee Paid By</span>
+                    <span className="text-sm text-zinc-300">{feePayer}</span>
+                  </div>
+                </div>
+                {catVendors.length > 0 && (
+                  <p className="text-xs text-zinc-600">{catVendors.map(v => v.business_name).join(", ")}</p>
+                )}
+              </div>
+            );
+          }
+
           return (
             <div key={cat} className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
               <p className="text-sm font-semibold text-white">{cat}</p>
@@ -2272,7 +2315,6 @@ function SplitsTab({ eventId }: { eventId: string }) {
               </div>
 
               {s.error && <p className="text-xs text-red-400">{s.error}</p>}
-              {s.saved && !s.error && <p className="text-xs text-emerald-400">Saved ✓</p>}
               <button
                 onClick={() => saveSplit(cat)}
                 disabled={s.saving}
