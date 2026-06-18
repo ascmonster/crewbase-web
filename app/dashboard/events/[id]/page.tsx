@@ -2075,11 +2075,11 @@ const SPLIT_DEF: VendorSplitState = {
 };
 
 function SplitsTab({ eventId }: { eventId: string }) {
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState<string | null>(null);
-  const [vendors, setVendors] = useState<EventVendorWithCategory[]>([]);
-  const [revenue, setRevenue] = useState<RevenueData | null>(null);
-  const [splits,  setSplits]  = useState<Record<string, VendorSplitState>>({});
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState<string | null>(null);
+  const [vendors,    setVendors]    = useState<EventVendorWithCategory[]>([]);
+  const [txByVendor, setTxByVendor] = useState<Record<string, number>>({});
+  const [splits,     setSplits]     = useState<Record<string, VendorSplitState>>({});
 
   useEffect(() => {
     (async () => {
@@ -2107,13 +2107,16 @@ function SplitsTab({ eventId }: { eventId: string }) {
           })));
         }
 
-        // 2. Revenue data
-        const { data: revenueData, error: revErr } = await supabase.functions.invoke(
-          "vendor-event-revenue",
-          { body: { event_id: eventId } }
-        );
-        if (revErr) throw revErr;
-        setRevenue(revenueData as RevenueData);
+        // 2. Transaction totals per vendor from square_transactions
+        const { data: txRows } = await supabase
+          .from("square_transactions")
+          .select("vendor_id, amount_cents")
+          .eq("event_id", eventId);
+        const totals: Record<string, number> = {};
+        for (const row of txRows ?? []) {
+          totals[row.vendor_id] = (totals[row.vendor_id] ?? 0) + (row.amount_cents ?? 0);
+        }
+        setTxByVendor(totals);
 
         // 3. Category splits
         const { data: splitRows } = await supabase
@@ -2181,12 +2184,8 @@ function SplitsTab({ eventId }: { eventId: string }) {
     (vendorsByCategory[cat] ??= []).push(v);
   }
 
-  // Revenue indexed by vendor_id
-  const revenueByVendor: Record<string, RevenueVendor> = {};
-  for (const v of revenue?.vendors ?? []) revenueByVendor[v.vendor_id] = v;
-
-  const hasAnyRevenue = (revenue?.vendors ?? []).some(v => (v.vendor_total ?? 0) > 0);
-  const fmtD = (n: number) => `$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+  const hasAnyRevenue = Object.values(txByVendor).some(v => v > 0);
+  const fmtD = (n: number) => `$${(Math.abs(n) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
 
   return (
     <div className="flex flex-col gap-6">
@@ -2280,61 +2279,47 @@ function SplitsTab({ eventId }: { eventId: string }) {
         <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Transaction Breakdown</p>
         {!hasAnyRevenue ? (
           <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-8 text-center">
-            <p className="text-sm text-zinc-500">No transaction data yet — check Revenue tab</p>
+            <p className="text-sm text-zinc-500">No transaction data yet</p>
           </div>
         ) : (
           <div className="flex flex-col gap-5">
             {categories.map((cat) => {
-              const catVendors = vendorsByCategory[cat] ?? [];
-              const catRevVendors = catVendors
-                .map(v => revenueByVendor[v.vendor_id])
-                .filter((rv): rv is RevenueVendor => !!rv && (rv.vendor_total ?? 0) > 0);
-              if (catRevVendors.length === 0) return null;
+              const catVendors = (vendorsByCategory[cat] ?? []).filter(v => (txByVendor[v.vendor_id] ?? 0) > 0);
+              if (catVendors.length === 0) return null;
 
               const splitSet = !!splits[cat];
               const vp = splitSet ? (parseFloat(splits[cat].vendor_percentage) || 0) : null;
               const pp = splitSet ? (parseFloat(splits[cat].promoter_percentage) || 0) : null;
-              const catTotal = catRevVendors.reduce((sum, v) => sum + (v.vendor_total ?? 0), 0);
+              const catTotalCents = catVendors.reduce((sum, v) => sum + (txByVendor[v.vendor_id] ?? 0), 0);
 
               return (
                 <div key={cat} className="flex flex-col gap-2">
                   <div className="flex items-center justify-between pb-1 border-b border-white/[0.06]">
                     <p className="text-sm font-semibold text-white">{cat}</p>
-                    <p className="text-sm font-semibold text-white">{fmtD(catTotal)}</p>
+                    <p className="text-sm font-semibold text-white">{fmtD(catTotalCents)}</p>
                   </div>
-                  {catRevVendors.map((rv) => {
-                    const total = rv.vendor_total ?? 0;
+                  {catVendors.map((v) => {
+                    const totalCents = txByVendor[v.vendor_id] ?? 0;
                     return (
-                      <div key={rv.vendor_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 flex flex-col gap-1.5">
-                        <p className="text-xs font-semibold text-zinc-300">{rv.business_name}</p>
+                      <div key={v.vendor_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 flex flex-col gap-1.5">
+                        <p className="text-xs font-semibold text-zinc-300">{v.business_name}</p>
                         <div className="flex justify-between text-xs">
                           <span className="text-zinc-400">Total Sales</span>
-                          <span className="text-white">{fmtD(total)}</span>
+                          <span className="text-white">{fmtD(totalCents)}</span>
                         </div>
                         {vp !== null && pp !== null ? (
                           <>
                             <div className="flex justify-between text-xs">
                               <span className="text-zinc-400">Vendor Cut ({vp}%)</span>
-                              <span className="text-zinc-300">{fmtD(total * (vp / 100))}</span>
+                              <span className="text-zinc-300">{fmtD(totalCents * (vp / 100))}</span>
                             </div>
                             <div className="flex justify-between text-xs">
                               <span className="text-zinc-400">Promoter Cut ({pp}%)</span>
-                              <span className="text-zinc-300">{fmtD(total * (pp / 100))}</span>
+                              <span className="text-zinc-300">{fmtD(totalCents * (pp / 100))}</span>
                             </div>
                           </>
                         ) : (
                           <p className="text-xs text-zinc-600 italic">Set split percentages above first</p>
-                        )}
-                        {rv.trucks.length > 0 && (
-                          <>
-                            <div className="my-0.5 border-t border-white/[0.06]" />
-                            {rv.trucks.map((t) => (
-                              <div key={t.truck_id} className="flex justify-between text-xs">
-                                <span className="text-zinc-500">{t.truck_name}</span>
-                                <span className="text-zinc-400">{fmtD(t.revenue)} · {t.transactions} txn{t.transactions !== 1 ? "s" : ""}</span>
-                              </div>
-                            ))}
-                          </>
                         )}
                       </div>
                     );
