@@ -1994,455 +1994,248 @@ function RevenueTab({ eventId }: { eventId: string }) {
 // ── Splits tab ────────────────────────────────────────────────────────────
 
 function SplitsTab({ eventId }: { eventId: string }) {
-  const [loading,                setLoading]               = useState(true);
-  const [squareConnected,        setSquareConnected]        = useState<boolean | null>(null);
-  const [vendorSquareConnected,  setVendorSquareConnected]  = useState<Record<string, boolean>>({});
-  const [vendors,                setVendors]                = useState<{ vendor_id: string; business_name: string }[]>([]);
-  const [squareLocations,  setSquareLocations]  = useState<Record<string, SquareLocation[]>>({});
-  const [locationsError,   setLocationsError]   = useState<Record<string, string>>({});
-  const [vendorLocations,  setVendorLocations]  = useState<Record<string, { square_location_id: string; name: string }>>({});
-  const [locationSaved,    setLocationSaved]    = useState<Record<string, boolean>>({});
-  const [splits,           setSplits]           = useState<Record<string, VendorSplitState>>({});
-  const [txData,           setTxData]           = useState<Record<string, VendorTxSummary>>({});
-  const [syncing,          setSyncing]          = useState(false);
-  const [syncToast,        setSyncToast]        = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState<string | null>(null);
+  const [revenue, setRevenue] = useState<RevenueData | null>(null);
+  const [splits,  setSplits]  = useState<Record<string, VendorSplitState>>({});
 
   useEffect(() => {
     (async () => {
       try {
         const supabase = createClient();
 
-        // Square connection — load per-vendor status
-        const { data: cfgRows } = await supabase.from("event_square_config").select("vendor_id").eq("event_id", eventId);
-        const connMap: Record<string, boolean> = {};
-        for (const row of (cfgRows ?? []) as { vendor_id: string | null }[]) {
-          if (row.vendor_id) connMap[row.vendor_id] = true;
-        }
-        setVendorSquareConnected(connMap);
-        setSquareConnected((cfgRows ?? []).length > 0);
+        // Fetch vendor + revenue data
+        const { data: revenueData, error: revErr } = await supabase.functions.invoke(
+          "vendor-event-revenue",
+          { body: { event_id: eventId } }
+        );
+        if (revErr) throw revErr;
+        setRevenue(revenueData as RevenueData);
 
-        // Vendors
-        const { data: evRows } = await supabase.from("event_vendors").select("vendor_id").eq("event_id", eventId);
-        const vendorIds = (evRows ?? []).map((r: { vendor_id: string }) => r.vendor_id);
+        // Pre-populate splits from DB
+        const vendorIds = (revenueData as RevenueData).vendors.map((v: RevenueVendor) => v.vendor_id);
         if (vendorIds.length > 0) {
-          const { data: profiles } = await supabase.from("vendor_profiles").select("user_id, business_name").in("user_id", vendorIds);
-          setVendors((profiles ?? []).map((p: { user_id: string; business_name: string | null }) => ({ vendor_id: p.user_id, business_name: p.business_name ?? "Vendor" })));
-        }
-
-        // Vendor locations
-        const { data: vlRows } = await supabase.from("vendor_locations").select("vendor_id, square_location_id, name").eq("event_id", eventId);
-        const vlMap: Record<string, { square_location_id: string; name: string }> = {};
-        for (const vl of vlRows ?? []) {
-          if (vl.square_location_id) vlMap[vl.vendor_id] = { square_location_id: vl.square_location_id, name: vl.name ?? "" };
-        }
-        setVendorLocations(vlMap);
-
-        // Splits
-        const { data: splitRows } = await supabase.from("event_vendor_splits").select("vendor_id, vendor_percentage, promoter_percentage, site_fee_cents, settlement_mode, fee_payer, square_location_id").eq("event_id", eventId);
-        const splitMap: Record<string, VendorSplitState> = {};
-        for (const row of splitRows ?? []) {
-          splitMap[row.vendor_id] = {
-            vendor_percentage:   String(row.vendor_percentage ?? 50),
-            promoter_percentage: String(row.promoter_percentage ?? 50),
-            site_fee:            String((row.site_fee_cents ?? 0) / 100),
-            settlement_mode:     row.settlement_mode ?? "end_of_day",
-            fee_payer:           row.fee_payer ?? "vendor",
-            square_location_id:  row.square_location_id ?? null,
-            saving: false, error: null, saved: false,
-          };
-        }
-        setSplits(splitMap);
-
-        // Transactions
-        await loadTxDataWith(supabase);
-
-        // Square locations — per vendor (parallel)
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session && vendorIds.length > 0) {
-          await Promise.all(
-            vendorIds.filter((id: string) => connMap[id]).map(async (vendorId: string) => {
-              try {
-                const res = await fetch(
-                  `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/get-square-locations`,
-                  {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-                    body: JSON.stringify({ event_id: eventId, vendor_id: vendorId }),
-                  }
-                );
-                if (!res.ok) throw new Error(await res.text());
-                const json = await res.json();
-                setSquareLocations(prev => ({ ...prev, [vendorId]: json.locations ?? [] }));
-              } catch {
-                setLocationsError(prev => ({ ...prev, [vendorId]: "Could not load Square locations." }));
-              }
-            })
-          );
+          const { data: rows } = await supabase
+            .from("event_vendor_splits")
+            .select("vendor_id, vendor_percentage, promoter_percentage, site_fee_cents, settlement_mode, fee_payer")
+            .eq("event_id", eventId)
+            .in("vendor_id", vendorIds);
+          const map: Record<string, VendorSplitState> = {};
+          for (const row of rows ?? []) {
+            map[row.vendor_id] = {
+              vendor_percentage:   String(row.vendor_percentage ?? 50),
+              promoter_percentage: String(row.promoter_percentage ?? 50),
+              site_fee:            String((row.site_fee_cents ?? 0) / 100),
+              settlement_mode:     row.settlement_mode ?? "end_of_day",
+              fee_payer:           row.fee_payer ?? "vendor",
+              square_location_id:  null,
+              saving: false, error: null, saved: false,
+            };
+          }
+          setSplits(map);
         }
       } catch (e) {
-        console.error("SplitsTab load error:", e);
+        setError(e instanceof Error ? e.message : "Failed to load");
       } finally {
         setLoading(false);
       }
     })();
   }, [eventId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function loadTxDataWith(supabase: ReturnType<typeof createClient>) {
-    const { data: txRows } = await supabase.from("square_transactions").select("vendor_id, amount_cents, payment_method").eq("event_id", eventId);
-    const map: Record<string, VendorTxSummary> = {};
-    for (const tx of txRows ?? []) {
-      if (!map[tx.vendor_id]) map[tx.vendor_id] = { total_cents: 0, card_cents: 0, cash_cents: 0 };
-      const amt = tx.amount_cents ?? 0;
-      map[tx.vendor_id].total_cents += amt;
-      if ((tx.payment_method as string | null) === "CASH") {
-        map[tx.vendor_id].cash_cents += amt;
-      } else {
-        map[tx.vendor_id].card_cents += amt;
-      }
-    }
-    setTxData(map);
-  }
-
-  async function saveLocation(vendorId: string, locationId: string, locationName: string) {
-    const supabase = createClient();
-    const { error } = await supabase.from("event_vendor_splits").upsert(
-      {
-        vendor_id: vendorId,
-        event_id: eventId,
-        square_location_id: locationId,
-        vendor_percentage: 50,
-        promoter_percentage: 50,
-        site_fee_cents: 0,
-        settlement_mode: "end_of_day",
-        fee_payer: "vendor",
-      },
-      { onConflict: "vendor_id,event_id" }
-    );
-    if (!error) {
-      setVendorLocations(prev => ({ ...prev, [vendorId]: { square_location_id: locationId, name: locationName } }));
-      setLocationSaved(prev => ({ ...prev, [vendorId]: true }));
-      setTimeout(() => setLocationSaved(prev => ({ ...prev, [vendorId]: false })), 2000);
-    }
-  }
-
-  function patchSplit(vendorId: string, changes: Partial<VendorSplitState>) {
+  function patch(vendorId: string, changes: Partial<VendorSplitState>) {
     setSplits(prev => ({ ...prev, [vendorId]: { ...prev[vendorId], ...changes } }));
   }
 
   async function saveSplit(vendorId: string) {
-    const defaultState: VendorSplitState = { vendor_percentage: "50", promoter_percentage: "50", site_fee: "0", settlement_mode: "end_of_day", fee_payer: "vendor", square_location_id: null, saving: false, error: null, saved: false };
-    const s = splits[vendorId] ?? defaultState;
+    const def: VendorSplitState = { vendor_percentage: "50", promoter_percentage: "50", site_fee: "0", settlement_mode: "end_of_day", fee_payer: "vendor", square_location_id: null, saving: false, error: null, saved: false };
+    const s = splits[vendorId] ?? def;
     const vp = parseFloat(s.vendor_percentage);
     const pp = parseFloat(s.promoter_percentage);
     if (!isFinite(vp) || !isFinite(pp) || Math.round(vp + pp) !== 100) {
-      patchSplit(vendorId, { error: "Percentages must add to 100" });
+      patch(vendorId, { error: "Percentages must add to 100" });
       return;
     }
-    patchSplit(vendorId, { saving: true, error: null, saved: false });
-    const supabase = createClient();
-    const vl = vendorLocations[vendorId];
-    const { error } = await supabase.from("event_vendor_splits").upsert(
-      {
-        event_id: eventId,
-        vendor_id: vendorId,
-        square_location_id: vl?.square_location_id ?? null,
-        vendor_percentage: vp,
-        promoter_percentage: pp,
-        royalty_percentage: 0,
-        site_fee_cents: Math.round((parseFloat(s.site_fee) || 0) * 100),
-        settlement_mode: s.settlement_mode,
-        fee_payer: s.fee_payer,
-      },
-      { onConflict: "event_id,vendor_id" }
-    );
-    patchSplit(vendorId, { saving: false, error: error?.message ?? null, saved: !error });
-  }
-
-  async function syncTransactions() {
-    setSyncing(true);
-    try {
-      const supabase = createClient();
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/sync-square-transactions`,
+    patch(vendorId, { saving: true, error: null, saved: false });
+    const { error } = await createClient()
+      .from("event_vendor_splits")
+      .upsert(
         {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ event_id: eventId }),
-        }
+          event_id: eventId,
+          vendor_id: vendorId,
+          vendor_percentage: vp,
+          promoter_percentage: pp,
+          site_fee_cents: Math.round((parseFloat(s.site_fee) || 0) * 100),
+          settlement_mode: s.settlement_mode,
+          fee_payer: s.fee_payer,
+        },
+        { onConflict: "vendor_id,event_id" }
       );
-      if (res.ok) {
-        const json = await res.json();
-        const synced: number = json.synced ?? 0;
-        setSyncToast(`Synced ${synced} transaction${synced !== 1 ? "s" : ""} from Square`);
-        setTimeout(() => setSyncToast(null), 4000);
-        await loadTxDataWith(createClient());
-      }
-    } catch (e) {
-      console.error("sync threw:", e);
-    } finally {
-      setSyncing(false);
-    }
+    patch(vendorId, { saving: false, error: error?.message ?? null, saved: !error });
+    if (!error) setTimeout(() => patch(vendorId, { saved: false }), 2000);
   }
 
   if (loading) return <div className="py-16 text-center text-sm text-zinc-500">Loading…</div>;
+  if (error)   return <div className="py-16 text-center text-sm text-red-400">{error}</div>;
 
-  const vendorsWithLocation = vendors.filter(v => vendorLocations[v.vendor_id]);
-  const fmt = (cents: number) => `$${(Math.abs(cents) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+  const vendors = revenue?.vendors ?? [];
+  const fmtD = (n: number) => `$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
 
   return (
     <div className="flex flex-col gap-6">
 
-      {/* Section 1 — Square Connection */}
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-zinc-500">Square Integration</span>
-        {squareConnected === true && (
-          <span className="text-xs font-medium text-emerald-400">
-            {Object.values(vendorSquareConnected).filter(Boolean).length} vendor{Object.values(vendorSquareConnected).filter(Boolean).length !== 1 ? "s" : ""} connected
-          </span>
+      {/* SECTION 1 — SPLIT SETTINGS */}
+      <div className="flex flex-col gap-3">
+        <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Split Settings</p>
+        {vendors.length === 0 && (
+          <p className="text-xs text-zinc-600">No vendors on this event yet.</p>
+        )}
+        {vendors.map((v) => {
+          const def: VendorSplitState = { vendor_percentage: "50", promoter_percentage: "50", site_fee: "0", settlement_mode: "end_of_day", fee_payer: "vendor", square_location_id: null, saving: false, error: null, saved: false };
+          const s = splits[v.vendor_id] ?? def;
+          return (
+            <div key={v.vendor_id} className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
+              <p className="text-sm font-semibold text-white">{v.business_name}</p>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Vendor %</label>
+                  <input
+                    type="number" min="0" max="100" step="1"
+                    value={s.vendor_percentage}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      patch(v.vendor_id, {
+                        vendor_percentage:   val,
+                        promoter_percentage: String(Math.max(0, 100 - (parseFloat(val) || 0))),
+                      });
+                    }}
+                    className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [appearance:textfield]"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Promoter %</label>
+                  <input
+                    type="number"
+                    value={s.promoter_percentage}
+                    readOnly
+                    className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-sm text-zinc-400 outline-none cursor-not-allowed [appearance:textfield]"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Site Fee</label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">$</span>
+                  <input
+                    type="number" min="0" step="0.01"
+                    value={s.site_fee}
+                    onChange={(e) => patch(v.vendor_id, { site_fee: e.target.value })}
+                    className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] py-2 pl-7 pr-3 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [appearance:textfield]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Settlement</label>
+                  <select
+                    value={s.settlement_mode}
+                    onChange={(e) => patch(v.vendor_id, { settlement_mode: e.target.value as "real_time" | "end_of_day" })}
+                    className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
+                  >
+                    <option value="end_of_day">End of Day</option>
+                    <option value="real_time">Real Time</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Crewbase Fee Paid By</label>
+                  <select
+                    value={s.fee_payer}
+                    onChange={(e) => patch(v.vendor_id, { fee_payer: e.target.value as "vendor" | "promoter" | "split" })}
+                    className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
+                  >
+                    <option value="vendor">Vendor</option>
+                    <option value="promoter">Promoter</option>
+                    <option value="split">Split Equally</option>
+                  </select>
+                </div>
+              </div>
+
+              {s.error && <p className="text-xs text-red-400">{s.error}</p>}
+              {s.saved && !s.error && <p className="text-xs text-emerald-400">Saved ✓</p>}
+              <button
+                onClick={() => saveSplit(v.vendor_id)}
+                disabled={s.saving}
+                className="self-start rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-black transition-colors hover:bg-amber-400 disabled:opacity-40"
+              >
+                {s.saving ? "Saving…" : "Save Split"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* SECTION 2 — TRANSACTION BREAKDOWN */}
+      <div className="flex flex-col gap-3">
+        <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Transaction Breakdown</p>
+        {vendors.length === 0 || vendors.every(v => !(v.vendor_total ?? 0)) ? (
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-8 text-center">
+            <p className="text-sm text-zinc-500">No transaction data yet — check Revenue tab</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {vendors.map((v) => {
+              const total = v.vendor_total ?? 0;
+              if (!total) return null;
+              const s = splits[v.vendor_id];
+              const vp = s ? (parseFloat(s.vendor_percentage) || 0) : 50;
+              const pp = s ? (parseFloat(s.promoter_percentage) || 0) : 50;
+              const vendorCut = total * (vp / 100);
+              const promoterCut = total * (pp / 100);
+              const hasCash = v.trucks.some(t => t.square_linked && t.revenue > 0);
+              return (
+                <div key={v.vendor_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 flex flex-col gap-1.5">
+                  <p className="text-sm font-semibold text-white mb-1">{v.business_name}</p>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-zinc-400">Total Sales</span>
+                    <span className="text-white font-medium">{fmtD(total)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-zinc-400">Vendor Cut ({vp}%)</span>
+                    <span className="text-zinc-300">{fmtD(vendorCut)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-zinc-400">Promoter Cut ({pp}%)</span>
+                    <span className="text-zinc-300">{fmtD(promoterCut)}</span>
+                  </div>
+                  {v.trucks.length > 0 && (
+                    <>
+                      <div className="my-0.5 border-t border-white/[0.06]" />
+                      {v.trucks.map((t) => (
+                        <div key={t.truck_id} className="flex justify-between text-xs">
+                          <span className="text-zinc-500">{t.truck_name}</span>
+                          <span className="text-zinc-400">
+                            {fmtD(t.revenue)} · {t.transactions} txn{t.transactions !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                  {hasCash && (
+                    <div className="mt-1 flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                      Collect cash from vendor manually
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
 
-      {/* Section 2 — Vendor Location Assignment */}
-      {vendors.length > 0 && (
-        <div className="flex flex-col gap-3">
-          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Vendor Locations</p>
-          {vendors.map((v) => (
-            <div key={v.vendor_id} className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-semibold text-white">{v.business_name}</p>
-                {vendorSquareConnected[v.vendor_id] ? (
-                  <span className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400 shrink-0">
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-                    Square Connected
-                  </span>
-                ) : (
-                  <a
-                    href={`/api/square/connect?event_id=${eventId}&vendor_id=${v.vendor_id}`}
-                    className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 px-2.5 py-1 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/10 shrink-0"
-                  >
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="3"/></svg>
-                    Connect Square
-                  </a>
-                )}
-              </div>
-              {vendorSquareConnected[v.vendor_id] && (
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Square Location</label>
-                  <select
-                    value={vendorLocations[v.vendor_id]?.square_location_id ?? ""}
-                    onChange={(e) => {
-                      const locationId = e.target.value;
-                      const locationName = (squareLocations[v.vendor_id] ?? []).find(l => l.id === locationId)?.name ?? "";
-                      if (locationId) saveLocation(v.vendor_id, locationId, locationName);
-                    }}
-                    className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
-                  >
-                    <option value="">-- Select a location --</option>
-                    {(squareLocations[v.vendor_id] ?? []).map((loc) => (
-                      <option key={loc.id} value={loc.id}>{loc.name}</option>
-                    ))}
-                  </select>
-                  {locationsError[v.vendor_id] && <p className="text-xs text-red-400">{locationsError[v.vendor_id]}</p>}
-                  {locationSaved[v.vendor_id] && <p className="text-xs text-emerald-400">Saved ✓</p>}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Section 3 — Split Settings */}
-      {vendors.length > 0 && (
-        <div className="flex flex-col gap-3">
-          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Split Settings</p>
-          {vendors.map((v) => {
-            const defaultSt: VendorSplitState = { vendor_percentage: "50", promoter_percentage: "50", site_fee: "0", settlement_mode: "end_of_day", fee_payer: "vendor", square_location_id: null, saving: false, error: null, saved: false };
-            const s = splits[v.vendor_id] ?? defaultSt;
-            const vp = parseFloat(s.vendor_percentage) || 0;
-            const pp = parseFloat(s.promoter_percentage) || 0;
-            const sumOk = Math.round(vp + pp) === 100;
-            return (
-              <div key={v.vendor_id} className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
-                <p className="text-sm font-semibold text-white">{v.business_name}</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Vendor %</label>
-                    <input
-                      type="number" min="0" max="100" step="1"
-                      value={s.vendor_percentage}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        patchSplit(v.vendor_id, { vendor_percentage: val, promoter_percentage: String(Math.max(0, 100 - (parseFloat(val) || 0))) });
-                      }}
-                      className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [appearance:textfield]"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Promoter %</label>
-                    <input
-                      type="number" min="0" max="100" step="1"
-                      value={s.promoter_percentage}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        patchSplit(v.vendor_id, { promoter_percentage: val, vendor_percentage: String(Math.max(0, 100 - (parseFloat(val) || 0))) });
-                      }}
-                      className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [appearance:textfield]"
-                    />
-                  </div>
-                </div>
-                {!sumOk && <p className="-mt-1 text-xs text-red-400">Must add to 100%</p>}
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Site Fee</label>
-                  <div className="relative">
-                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">$</span>
-                    <input
-                      type="number" min="0" step="0.01"
-                      value={s.site_fee}
-                      onChange={(e) => patchSplit(v.vendor_id, { site_fee: e.target.value })}
-                      className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] py-2 pl-7 pr-3 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [appearance:textfield]"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Settlement</label>
-                    <select
-                      value={s.settlement_mode}
-                      onChange={(e) => patchSplit(v.vendor_id, { settlement_mode: e.target.value as "real_time" | "end_of_day" })}
-                      className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
-                    >
-                      <option value="end_of_day">End of Day</option>
-                      <option value="real_time">Real-time</option>
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Crewbase Fee Paid By</label>
-                    <select
-                      value={s.fee_payer}
-                      onChange={(e) => patchSplit(v.vendor_id, { fee_payer: e.target.value as "vendor" | "promoter" | "split" })}
-                      className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
-                    >
-                      <option value="vendor">Vendor</option>
-                      <option value="promoter">Promoter</option>
-                      <option value="split">Split Equally</option>
-                    </select>
-                  </div>
-                </div>
-                {s.error && <p className="text-xs text-red-400">{s.error}</p>}
-                {s.saved && !s.error && <p className="text-xs text-emerald-400">Saved</p>}
-                <button
-                  onClick={() => saveSplit(v.vendor_id)}
-                  disabled={s.saving || !sumOk}
-                  className="self-start rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-black transition-colors hover:bg-amber-400 disabled:opacity-40"
-                >
-                  {s.saving ? "Saving…" : "Save Split"}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Section 4 — Transaction Breakdown */}
-      {vendors.length > 0 && (
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Transaction Breakdown</p>
-            <button
-              onClick={syncTransactions}
-              disabled={syncing}
-              className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] px-4 py-2 text-xs font-medium text-zinc-400 hover:text-white transition-colors disabled:opacity-40"
-            >
-              {syncing ? (
-                <>
-                  <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
-                  Syncing…
-                </>
-              ) : "↻ Sync Transactions"}
-            </button>
-          </div>
-          {syncToast && (
-            <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs font-medium text-emerald-400">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-              {syncToast}
-            </div>
-          )}
-          {Object.keys(txData).length === 0 && (
-            <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-8 text-center">
-              <p className="text-sm text-zinc-500">No transactions synced yet</p>
-              <p className="text-xs text-zinc-600 mt-1">Sync from Square to see a breakdown</p>
-            </div>
-          )}
-          {vendors.map((v) => {
-            const tx = txData[v.vendor_id];
-            if (!tx || tx.total_cents === 0) return null;
-            const s = splits[v.vendor_id];
-            const vp = s ? (parseFloat(s.vendor_percentage) || 0) : 50;
-            const pp = s ? (parseFloat(s.promoter_percentage) || 0) : 50;
-            const siteFeeCents = s ? Math.round((parseFloat(s.site_fee) || 0) * 100) : 0;
-            const crewbaseFeeCents = Math.round(tx.total_cents * 0.0295);
-            const remainder = tx.total_cents - crewbaseFeeCents;
-            const vendorCutCents = Math.round(remainder * (vp / 100));
-            const promoterCutCents = Math.round(remainder * (pp / 100));
-            const netVendorPayoutCents = vendorCutCents - siteFeeCents;
-            return (
-              <div key={v.vendor_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 flex flex-col gap-1.5">
-                <p className="text-sm font-semibold text-white mb-1">{v.business_name}</p>
-                <div className="flex justify-between text-xs">
-                  <span className="text-zinc-400">Total Sales</span>
-                  <span className="text-white font-medium">{fmt(tx.total_cents)}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-zinc-500">Card Sales</span>
-                  <span className="text-zinc-300">{fmt(tx.card_cents)}</span>
-                </div>
-                {tx.cash_cents > 0 && (
-                  <div className="flex justify-between text-xs">
-                    <span className="text-zinc-500">Cash Sales</span>
-                    <span className="text-zinc-300">{fmt(tx.cash_cents)}</span>
-                  </div>
-                )}
-                <div className="my-0.5 border-t border-white/[0.06]" />
-                <div className="flex justify-between text-xs">
-                  <span className="text-zinc-400">Crewbase Fee (2.95%)</span>
-                  <span className="text-red-400">−{fmt(crewbaseFeeCents)}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-zinc-400">Vendor Cut ({vp}%)</span>
-                  <span className="text-zinc-300">{fmt(vendorCutCents)}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-zinc-400">Promoter Cut ({pp}%)</span>
-                  <span className="text-zinc-300">{fmt(promoterCutCents)}</span>
-                </div>
-                {siteFeeCents > 0 && (
-                  <div className="flex justify-between text-xs">
-                    <span className="text-zinc-400">Site Fee</span>
-                    <span className="text-red-400">−{fmt(siteFeeCents)}</span>
-                  </div>
-                )}
-                <div className="my-0.5 border-t border-white/[0.06]" />
-                <div className="flex justify-between text-xs font-semibold">
-                  <span className="text-zinc-300">Net Vendor Payout</span>
-                  <span className={netVendorPayoutCents >= 0 ? "text-emerald-400" : "text-red-400"}>
-                    {netVendorPayoutCents < 0 ? "−" : ""}{fmt(netVendorPayoutCents)}
-                  </span>
-                </div>
-                {tx.cash_cents > 0 && (
-                  <div className="mt-1 flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                    Collect {fmt(tx.cash_cents)} cash from vendor manually
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Section 5 — Pay Vendors (Phase 2 placeholder) */}
+      {/* SECTION 3 — SETTLE EVENT placeholder */}
       <div className="relative">
         <div className="absolute inset-0 z-10 flex items-center justify-center">
           <span className="rounded-full border border-zinc-500/40 bg-[#0a0a0a] px-3 py-1 text-xs font-semibold text-zinc-500">Coming Soon</span>
