@@ -2069,8 +2069,8 @@ type EventVendorWithCategory = {
 };
 
 const SPLIT_DEF: VendorSplitState = {
-  vendor_percentage: "50", promoter_percentage: "50", site_fee: "0",
-  settlement_mode: "end_of_day", fee_payer: "vendor",
+  vendor_percentage: "50", promoter_percentage: "50",
+  site_fee: "0", settlement_mode: "end_of_day", fee_payer: "vendor",
   square_location_id: null, saving: false, error: null, saved: false, locked: false,
 };
 
@@ -2118,16 +2118,14 @@ function SplitsTab({ eventId }: { eventId: string }) {
         // 3. Category splits
         const { data: splitRows } = await supabase
           .from("event_category_splits")
-          .select("category, vendor_percentage, promoter_percentage, site_fee_cents, settlement_mode, fee_payer")
+          .select("category, vendor_percentage, promoter_percentage")
           .eq("event_id", eventId);
         const splitMap: Record<string, VendorSplitState> = {};
         for (const row of splitRows ?? []) {
           splitMap[row.category] = {
             vendor_percentage:   String(row.vendor_percentage ?? 50),
             promoter_percentage: String(row.promoter_percentage ?? 50),
-            site_fee:            String((row.site_fee_cents ?? 0) / 100),
-            settlement_mode:     row.settlement_mode ?? "end_of_day",
-            fee_payer:           row.fee_payer ?? "vendor",
+            site_fee: "0", settlement_mode: "end_of_day", fee_payer: "vendor",
             square_location_id:  null,
             saving: false, error: null, saved: false, locked: true,
           };
@@ -2162,9 +2160,6 @@ function SplitsTab({ eventId }: { eventId: string }) {
           category: cat,
           vendor_percentage: vp,
           promoter_percentage: pp,
-          site_fee_cents: Math.round((parseFloat(s.site_fee) || 0) * 100),
-          settlement_mode: s.settlement_mode,
-          fee_payer: s.fee_payer,
         },
         { onConflict: "event_id,category" }
       );
@@ -2205,8 +2200,6 @@ function SplitsTab({ eventId }: { eventId: string }) {
         {categories.map((cat) => {
           const s = splits[cat] ?? SPLIT_DEF;
           const catVendors = vendorsByCategory[cat] ?? [];
-          const feePayer = s.fee_payer === "vendor" ? "Vendor" : s.fee_payer === "promoter" ? "Promoter" : "Split Equally";
-          const settlement = s.settlement_mode === "end_of_day" ? "End of Day" : "Real Time";
 
           if (s.locked) {
             return (
@@ -2223,18 +2216,6 @@ function SplitsTab({ eventId }: { eventId: string }) {
                   <div className="flex flex-col gap-0.5">
                     <span className="text-xs font-medium uppercase tracking-wider text-zinc-600">Promoter %</span>
                     <span className="text-sm text-zinc-300">{s.promoter_percentage}%</span>
-                  </div>
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs font-medium uppercase tracking-wider text-zinc-600">Site Fee</span>
-                    <span className="text-sm text-zinc-300">${parseFloat(s.site_fee || "0").toFixed(2)}</span>
-                  </div>
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs font-medium uppercase tracking-wider text-zinc-600">Settlement</span>
-                    <span className="text-sm text-zinc-300">{settlement}</span>
-                  </div>
-                  <div className="flex flex-col gap-0.5 col-span-2">
-                    <span className="text-xs font-medium uppercase tracking-wider text-zinc-600">Crewbase Fee Paid By</span>
-                    <span className="text-sm text-zinc-300">{feePayer}</span>
                   </div>
                 </div>
                 {catVendors.length > 0 && (
@@ -2272,45 +2253,6 @@ function SplitsTab({ eventId }: { eventId: string }) {
                     readOnly
                     className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-sm text-zinc-400 outline-none cursor-not-allowed [appearance:textfield]"
                   />
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Site Fee</label>
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">$</span>
-                  <input
-                    type="number" min="0" step="0.01"
-                    value={s.site_fee}
-                    onChange={(e) => patch(cat, { site_fee: e.target.value })}
-                    className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] py-2 pl-7 pr-3 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [appearance:textfield]"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Settlement</label>
-                  <select
-                    value={s.settlement_mode}
-                    onChange={(e) => patch(cat, { settlement_mode: e.target.value as "real_time" | "end_of_day" })}
-                    className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
-                  >
-                    <option value="end_of_day">End of Day</option>
-                    <option value="real_time">Real Time</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Crewbase Fee Paid By</label>
-                  <select
-                    value={s.fee_payer}
-                    onChange={(e) => patch(cat, { fee_payer: e.target.value as "vendor" | "promoter" | "split" })}
-                    className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [color-scheme:dark]"
-                  >
-                    <option value="vendor">Vendor</option>
-                    <option value="promoter">Promoter</option>
-                    <option value="split">Split Equally</option>
-                  </select>
                 </div>
               </div>
 
