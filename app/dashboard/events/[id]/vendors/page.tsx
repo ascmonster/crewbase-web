@@ -20,7 +20,9 @@ export default function AddVendorsPage({ params }: { params: Promise<{ id: strin
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [dataLoading, setDataLoading] = useState(true);
-  const [adding, setAdding] = useState<string | null>(null);
+  const [pendingVendor, setPendingVendor] = useState<VendorProfile | null>(null);
+  const [pendingCategory, setPendingCategory] = useState("Food & Beverage");
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -46,16 +48,17 @@ export default function AddVendorsPage({ params }: { params: Promise<{ id: strin
     load();
   }, [user?.id, eventId]);
 
-  async function addVendor(vendorId: string) {
-    setAdding(vendorId);
+  async function confirmAdd() {
+    if (!pendingVendor) return;
+    setConfirming(true);
     const { error } = await createClient()
       .from("event_vendors")
-      .insert({ event_id: eventId, vendor_id: vendorId, status: "pending" });
-
+      .insert({ event_id: eventId, vendor_id: pendingVendor.user_id, status: "pending", category: pendingCategory });
     if (!error) {
-      setAddedIds((prev) => new Set([...prev, vendorId]));
+      setAddedIds((prev) => new Set([...prev, pendingVendor.user_id]));
     }
-    setAdding(null);
+    setConfirming(false);
+    setPendingVendor(null);
   }
 
   if (authLoading || dataLoading) {
@@ -121,7 +124,6 @@ export default function AddVendorsPage({ params }: { params: Promise<{ id: strin
         <div className="flex flex-col gap-2">
           {filtered.map((v) => {
             const isAdded = addedIds.has(v.user_id);
-            const isAdding = adding === v.user_id;
             return (
               <div
                 key={v.user_id}
@@ -157,11 +159,10 @@ export default function AddVendorsPage({ params }: { params: Promise<{ id: strin
                   </span>
                 ) : (
                   <button
-                    onClick={() => addVendor(v.user_id)}
-                    disabled={isAdding}
-                    className="shrink-0 rounded-lg bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 px-3 py-1.5 text-xs font-semibold hover:bg-indigo-600/40 transition-colors disabled:opacity-50"
+                    onClick={() => { setPendingVendor(v); setPendingCategory("Food & Beverage"); }}
+                    className="shrink-0 rounded-lg bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 px-3 py-1.5 text-xs font-semibold hover:bg-indigo-600/40 transition-colors"
                   >
-                    {isAdding ? "…" : "Add"}
+                    Add
                   </button>
                 )}
               </div>
@@ -178,6 +179,42 @@ export default function AddVendorsPage({ params }: { params: Promise<{ id: strin
           Done — View Event
         </Link>
       </div>
+
+      {pendingVendor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/70">
+          <div className="w-full max-w-xs rounded-2xl border border-white/[0.08] bg-[#141414] p-6">
+            <h3 className="font-semibold text-white mb-4">{pendingVendor.business_name}</h3>
+            <div className="flex flex-col gap-1.5 mb-5">
+              <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Category</label>
+              <select
+                value={pendingCategory}
+                onChange={(e) => setPendingCategory(e.target.value)}
+                className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none focus:border-indigo-500 transition-colors [color-scheme:dark]"
+              >
+                <option value="Food & Beverage">Food &amp; Beverage</option>
+                <option value="Bar">Bar</option>
+                <option value="Merchandise">Merchandise</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setPendingVendor(null)}
+                className="flex-1 h-9 rounded-lg border border-white/[0.08] text-sm text-zinc-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmAdd}
+                disabled={confirming}
+                className="flex-1 h-9 rounded-lg bg-indigo-600 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors disabled:opacity-50"
+              >
+                {confirming ? "Adding…" : "Confirm Add"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

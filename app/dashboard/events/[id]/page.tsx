@@ -33,6 +33,7 @@ type EventVendorRow = {
   vendor_id: string; // = vendor_profiles.user_id = auth uid
   status: string;
   staff_limit: number | null;
+  category: string | null;
   profile: VendorProfile | null;
 };
 
@@ -779,6 +780,9 @@ function VendorsTab({
   const [limitValue, setLimitValue] = useState("");
   const [showRequestDocs, setShowRequestDocs] = useState(false);
   const [addTruckFor, setAddTruckFor] = useState<string | null>(null);
+  const [assignCategoryFor, setAssignCategoryFor] = useState<string | null>(null);
+  const [assignCategory, setAssignCategory] = useState("Food & Beverage");
+  const [assigningCategory, setAssigningCategory] = useState(false);
 
   async function removeVendor(vendorId: string) {
     await createClient()
@@ -799,6 +803,20 @@ function VendorsTab({
       .eq("vendor_id", vendorId);
     setVendorRows(vendorRows.map((v) => v.vendor_id === vendorId ? { ...v, staff_limit: limit } : v));
     setEditingLimit(null);
+  }
+
+  async function saveCategory(vendorId: string) {
+    setAssigningCategory(true);
+    const { error } = await createClient()
+      .from("event_vendors")
+      .update({ category: assignCategory })
+      .eq("event_id", eventId)
+      .eq("vendor_id", vendorId);
+    if (!error) {
+      setVendorRows(vendorRows.map((v) => v.vendor_id === vendorId ? { ...v, category: assignCategory } : v));
+      setAssignCategoryFor(null);
+    }
+    setAssigningCategory(false);
   }
 
   // Map vendor_profiles.id → docRequest
@@ -847,7 +865,19 @@ function VendorsTab({
               <div key={v.vendor_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex flex-col gap-1.5">
-                    <span className="font-semibold text-white text-sm">{name}</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-white text-sm">{name}</span>
+                      {v.category ? (
+                        <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-xs text-zinc-400">{v.category}</span>
+                      ) : (
+                        <button
+                          onClick={() => { setAssignCategoryFor(v.vendor_id); setAssignCategory("Food & Beverage"); }}
+                          className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                        >
+                          Assign Category
+                        </button>
+                      )}
+                    </div>
 
                     {editingLimit === v.vendor_id ? (
                       <div className="flex items-center gap-2">
@@ -941,6 +971,44 @@ function VendorsTab({
           onClose={() => setAddTruckFor(null)}
           onAdded={(t) => { setTrucks([...trucks, t]); setAddTruckFor(null); }}
         />
+      )}
+
+      {assignCategoryFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/70">
+          <div className="w-full max-w-xs rounded-2xl border border-white/[0.08] bg-[#141414] p-6">
+            <h3 className="font-semibold text-white mb-4">
+              {vendorRows.find((v) => v.vendor_id === assignCategoryFor)?.profile?.business_name ?? "Vendor"}
+            </h3>
+            <div className="flex flex-col gap-1.5 mb-5">
+              <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Category</label>
+              <select
+                value={assignCategory}
+                onChange={(e) => setAssignCategory(e.target.value)}
+                className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-2 text-sm text-white outline-none focus:border-indigo-500 transition-colors [color-scheme:dark]"
+              >
+                <option value="Food & Beverage">Food &amp; Beverage</option>
+                <option value="Bar">Bar</option>
+                <option value="Merchandise">Merchandise</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setAssignCategoryFor(null)}
+                className="flex-1 h-9 rounded-lg border border-white/[0.08] text-sm text-zinc-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => saveCategory(assignCategoryFor)}
+                disabled={assigningCategory}
+                className="flex-1 h-9 rounded-lg bg-indigo-600 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors disabled:opacity-50"
+              >
+                {assigningCategory ? "Saving…" : "Save Category"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -2334,7 +2402,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
 
       // 2. Parallel fetches
       const [evRes, esRes, docsRes, bcastRes, drRes, dcRes] = await Promise.all([
-        supabase.from("event_vendors").select("vendor_id, status, staff_limit").eq("event_id", id),
+        supabase.from("event_vendors").select("vendor_id, status, staff_limit, category").eq("event_id", id),
         supabase.from("event_staff").select("staff_id, status, is_gate_staff, vendor_id").eq("event_id", id),
         supabase.from("event_documents").select("id, title, type, content, file_url, created_at").eq("event_id", id),
         supabase.from("event_broadcasts").select("id, message, recipient_type, created_at").eq("event_id", id).order("created_at", { ascending: false }),
@@ -2342,7 +2410,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         supabase.from("event_date_change_requests").select("id, status, new_start_time, new_end_time").eq("event_id", id).eq("status", "pending").maybeSingle(),
       ]);
 
-      const rawVendors = (evRes.data ?? []) as { vendor_id: string; status: string; staff_limit: number | null }[];
+      const rawVendors = (evRes.data ?? []) as { vendor_id: string; status: string; staff_limit: number | null; category: string | null }[];
       const rawStaff   = (esRes.data   ?? []) as EventStaffRow[];
 
       setDocs((docsRes.data as DocRow[]) ?? []);
