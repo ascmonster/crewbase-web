@@ -2075,16 +2075,25 @@ const SPLIT_DEF: VendorSplitState = {
 };
 
 function SplitsTab({ eventId }: { eventId: string }) {
-  const [loading,    setLoading]    = useState(true);
-  const [error,      setError]      = useState<string | null>(null);
-  const [vendors,    setVendors]    = useState<EventVendorWithCategory[]>([]);
-  const [txTotals,   setTxTotals]   = useState<Record<string, number>>({});
-  const [splits,     setSplits]     = useState<Record<string, VendorSplitState>>({});
+  const [loading,         setLoading]         = useState(true);
+  const [error,           setError]           = useState<string | null>(null);
+  const [vendors,         setVendors]         = useState<EventVendorWithCategory[]>([]);
+  const [txTotals,        setTxTotals]        = useState<Record<string, number>>({});
+  const [splits,          setSplits]          = useState<Record<string, VendorSplitState>>({});
+  const [squareConnected, setSquareConnected] = useState<boolean | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
         const supabase = createClient();
+
+        // 0. Square connection status
+        const { data: sqCfg } = await supabase
+          .from("event_square_config")
+          .select("square_access_token")
+          .eq("event_id", eventId)
+          .maybeSingle();
+        setSquareConnected(!!(sqCfg?.square_access_token));
 
         // 1. Vendors with category
         const { data: evRows } = await supabase
@@ -2190,6 +2199,31 @@ function SplitsTab({ eventId }: { eventId: string }) {
 
   return (
     <div className="flex flex-col gap-6">
+
+      {/* SQUARE INTEGRATION */}
+      <div className="flex flex-col gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Square Integration</p>
+          {squareConnected === null ? (
+            <span className="text-xs text-zinc-600">Checking…</span>
+          ) : squareConnected ? (
+            <span className="flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-400">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+              Square Connected
+            </span>
+          ) : (
+            <a
+              href={`/api/square/connect?event_id=${eventId}`}
+              className="rounded-lg bg-white/[0.06] border border-white/[0.08] px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/[0.10] transition-colors"
+            >
+              Connect Square
+            </a>
+          )}
+        </div>
+        {squareConnected === false && (
+          <p className="text-xs text-zinc-600">Connect your Square account to enable payment splits at this event</p>
+        )}
+      </div>
 
       {/* SECTION 1 — SPLIT SETTINGS */}
       <div className="flex flex-col gap-3">
