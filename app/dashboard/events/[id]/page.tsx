@@ -2100,11 +2100,13 @@ function SplitsTab({ eventId }: { eventId: string }) {
             .from("vendor_profiles")
             .select("user_id, business_name")
             .in("user_id", vendorIds);
-          setVendors((profiles ?? []).map((p: { user_id: string; business_name: string }) => ({
+          const vendorList = (profiles ?? []).map((p: { user_id: string; business_name: string }) => ({
             vendor_id: p.user_id,
             business_name: p.business_name,
             category: categoryByVendor[p.user_id] ?? null,
-          })));
+          }));
+          console.log("[SplitsTab] vendors:", vendorList);
+          setVendors(vendorList);
         }
 
         // 2. Transaction totals per vendor
@@ -2116,6 +2118,7 @@ function SplitsTab({ eventId }: { eventId: string }) {
         txData?.forEach((tx: { vendor_id: string; amount_cents: number }) => {
           totals[tx.vendor_id] = (totals[tx.vendor_id] || 0) + tx.amount_cents;
         });
+        console.log("[SplitsTab] txTotals:", totals);
         setTxTotals(totals);
 
         // 3. Category splits
