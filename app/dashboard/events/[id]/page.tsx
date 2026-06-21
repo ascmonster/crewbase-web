@@ -2066,7 +2066,42 @@ type EventVendorWithCategory = {
   vendor_id: string;
   business_name: string;
   category: string | null;
+  square_connected: boolean | null;
 };
+
+function VendorInviteRow({
+  v,
+  inviteState,
+  onInvite,
+}: {
+  v: EventVendorWithCategory;
+  inviteState: "idle" | "sending" | "sent" | "error";
+  onInvite: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-xs text-zinc-400 truncate">{v.business_name}</span>
+      {v.square_connected ? (
+        <span className="flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 shrink-0">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+          Square Connected
+        </span>
+      ) : inviteState === "sent" ? (
+        <span className="text-[10px] font-medium text-emerald-400 shrink-0">Invite sent ✓</span>
+      ) : inviteState === "error" ? (
+        <span className="text-[10px] font-medium text-red-400 shrink-0">Failed to send invite</span>
+      ) : (
+        <button
+          onClick={onInvite}
+          disabled={inviteState === "sending"}
+          className="shrink-0 rounded border border-amber-500/40 px-2 py-0.5 text-[10px] font-semibold text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
+        >
+          {inviteState === "sending" ? "Sending…" : "Send Square Invite"}
+        </button>
+      )}
+    </div>
+  );
+}
 
 const SPLIT_DEF: VendorSplitState = {
   vendor_percentage: "50", promoter_percentage: "50",
@@ -2081,6 +2116,7 @@ function SplitsTab({ eventId }: { eventId: string }) {
   const [txTotals,        setTxTotals]        = useState<Record<string, number>>({});
   const [splits,          setSplits]          = useState<Record<string, VendorSplitState>>({});
   const [squareConnected, setSquareConnected] = useState<boolean | null>(null);
+  const [inviteState,     setInviteState]     = useState<Record<string, "idle" | "sending" | "sent" | "error">>({});
 
   useEffect(() => {
     (async () => {
@@ -2107,12 +2143,13 @@ function SplitsTab({ eventId }: { eventId: string }) {
         if (vendorIds.length > 0) {
           const { data: profiles } = await supabase
             .from("vendor_profiles")
-            .select("user_id, business_name")
+            .select("user_id, business_name, square_connected")
             .in("user_id", vendorIds);
-          const vendorList = (profiles ?? []).map((p: { user_id: string; business_name: string }) => ({
+          const vendorList = (profiles ?? []).map((p: { user_id: string; business_name: string; square_connected: boolean | null }) => ({
             vendor_id: p.user_id,
             business_name: p.business_name,
             category: categoryByVendor[p.user_id] ?? null,
+            square_connected: p.square_connected ?? null,
           }));
           setVendors(vendorList);
         }
@@ -2180,6 +2217,25 @@ function SplitsTab({ eventId }: { eventId: string }) {
       patch(cat, { saving: false, error: error.message });
     } else {
       patch(cat, { saving: false, error: null, saved: false, locked: true });
+    }
+  }
+
+  async function sendInvite(vendorId: string) {
+    setInviteState(prev => ({ ...prev, [vendorId]: "sending" }));
+    try {
+      const res = await fetch("/api/square/vendor-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_id: eventId, vendor_id: vendorId }),
+      });
+      if (res.ok) {
+        setInviteState(prev => ({ ...prev, [vendorId]: "sent" }));
+        setTimeout(() => setInviteState(prev => ({ ...prev, [vendorId]: "idle" })), 3000);
+      } else {
+        setInviteState(prev => ({ ...prev, [vendorId]: "error" }));
+      }
+    } catch {
+      setInviteState(prev => ({ ...prev, [vendorId]: "error" }));
     }
   }
 
@@ -2253,7 +2309,9 @@ function SplitsTab({ eventId }: { eventId: string }) {
                   </div>
                 </div>
                 {catVendors.length > 0 && (
-                  <p className="text-xs text-zinc-600">{catVendors.map(v => v.business_name).join(", ")}</p>
+                  <div className="flex flex-col gap-1.5 pt-1">
+                    {catVendors.map(v => <VendorInviteRow key={v.vendor_id} v={v} inviteState={inviteState[v.vendor_id] ?? "idle"} onInvite={() => sendInvite(v.vendor_id)} />)}
+                  </div>
                 )}
               </div>
             );
@@ -2300,9 +2358,9 @@ function SplitsTab({ eventId }: { eventId: string }) {
               </button>
 
               {catVendors.length > 0 && (
-                <p className="text-xs text-zinc-600">
-                  {catVendors.map(v => v.business_name).join(", ")}
-                </p>
+                <div className="flex flex-col gap-1.5 pt-1">
+                  {catVendors.map(v => <VendorInviteRow key={v.vendor_id} v={v} inviteState={inviteState[v.vendor_id] ?? "idle"} onInvite={() => sendInvite(v.vendor_id)} />)}
+                </div>
               )}
             </div>
           );
