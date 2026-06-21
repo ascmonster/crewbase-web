@@ -2105,22 +2105,18 @@ function SplitsTab({ eventId }: { eventId: string }) {
             business_name: p.business_name,
             category: categoryByVendor[p.user_id] ?? null,
           }));
-          console.log("[SplitsTab] vendors:", vendorList);
           setVendors(vendorList);
         }
 
         // 2. Transaction totals per vendor
-        console.log("[SplitsTab] fetching square_transactions for eventId:", eventId);
-        const { data: txData, error: txError } = await supabase
+        const { data: txData } = await supabase
           .from("square_transactions")
           .select("vendor_id, amount_cents")
           .eq("event_id", eventId);
-        console.log("[SplitsTab] txError:", txError, "txData.length:", txData?.length, "first row:", txData?.[0]);
         const totals: Record<string, number> = {};
         txData?.forEach((tx: { vendor_id: string; amount_cents: number }) => {
           totals[tx.vendor_id] = (totals[tx.vendor_id] || 0) + tx.amount_cents;
         });
-        console.log("[SplitsTab] txTotals:", totals);
         setTxTotals(totals);
 
         // 3. Category splits
