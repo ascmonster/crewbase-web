@@ -41,8 +41,9 @@ serve(async (req) => {
     )
     if (authErr || !user) return jsonRes({ error: 'Unauthorized' }, 401)
 
-    const { event_id } = await req.json()
+    const { event_id, vendor_id } = await req.json()
     if (!event_id) return jsonRes({ error: 'event_id required' }, 400)
+    if (!vendor_id) return jsonRes({ error: 'vendor_id required' }, 400)
 
     // Verify caller is promoter of this event
     const { data: event, error: evErr } = await supabase
@@ -54,15 +55,16 @@ serve(async (req) => {
     if (evErr || !event) return jsonRes({ error: 'Event not found' }, 404)
     if (event.promoter_id !== user.id) return jsonRes({ error: 'Forbidden' }, 403)
 
-    // Get the Square access token for this event
+    // Get the Square access token for this event+vendor
     const { data: cfg, error: cfgErr } = await supabase
       .from('event_square_config')
       .select('square_access_token')
       .eq('event_id', event_id)
+      .eq('vendor_id', vendor_id)
       .single()
 
     if (cfgErr || !cfg?.square_access_token) {
-      return jsonRes({ error: 'Square not connected for this event' }, 404)
+      return jsonRes({ error: 'Vendor Square not connected' }, 404)
     }
 
     // Fetch locations from Square

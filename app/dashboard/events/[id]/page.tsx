@@ -2069,40 +2069,6 @@ type EventVendorWithCategory = {
   square_connected: boolean | null;
 };
 
-function VendorInviteRow({
-  v,
-  inviteState,
-  onInvite,
-}: {
-  v: EventVendorWithCategory;
-  inviteState: "idle" | "sending" | "sent" | "error";
-  onInvite: () => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-xs text-zinc-400 truncate">{v.business_name}</span>
-      {v.square_connected ? (
-        <span className="flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 shrink-0">
-          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-          Square Connected
-        </span>
-      ) : inviteState === "sent" ? (
-        <span className="text-[10px] font-medium text-emerald-400 shrink-0">Invite sent ✓</span>
-      ) : inviteState === "error" ? (
-        <span className="text-[10px] font-medium text-red-400 shrink-0">Failed to send invite</span>
-      ) : (
-        <button
-          onClick={onInvite}
-          disabled={inviteState === "sending"}
-          className="shrink-0 rounded border border-amber-500/40 px-2 py-0.5 text-[10px] font-semibold text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
-        >
-          {inviteState === "sending" ? "Sending…" : "Send Square Invite"}
-        </button>
-      )}
-    </div>
-  );
-}
-
 const SPLIT_DEF: VendorSplitState = {
   vendor_percentage: "50", promoter_percentage: "50",
   site_fee: "0", settlement_mode: "end_of_day", fee_payer: "vendor",
@@ -2116,7 +2082,6 @@ function SplitsTab({ eventId }: { eventId: string }) {
   const [txTotals,        setTxTotals]        = useState<Record<string, number>>({});
   const [splits,          setSplits]          = useState<Record<string, VendorSplitState>>({});
   const [squareConnected, setSquareConnected] = useState<boolean | null>(null);
-  const [inviteState,     setInviteState]     = useState<Record<string, "idle" | "sending" | "sent" | "error">>({});
 
   useEffect(() => {
     (async () => {
@@ -2220,25 +2185,6 @@ function SplitsTab({ eventId }: { eventId: string }) {
     }
   }
 
-  async function sendInvite(vendorId: string) {
-    setInviteState(prev => ({ ...prev, [vendorId]: "sending" }));
-    try {
-      const res = await fetch("/api/square/vendor-invite", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event_id: eventId, vendor_id: vendorId }),
-      });
-      if (res.ok) {
-        setInviteState(prev => ({ ...prev, [vendorId]: "sent" }));
-        setTimeout(() => setInviteState(prev => ({ ...prev, [vendorId]: "idle" })), 3000);
-      } else {
-        setInviteState(prev => ({ ...prev, [vendorId]: "error" }));
-      }
-    } catch {
-      setInviteState(prev => ({ ...prev, [vendorId]: "error" }));
-    }
-  }
-
   if (loading) return <div className="py-16 text-center text-sm text-zinc-500">Loading…</div>;
   if (error)   return <div className="py-16 text-center text-sm text-red-400">{error}</div>;
 
@@ -2310,7 +2256,21 @@ function SplitsTab({ eventId }: { eventId: string }) {
                 </div>
                 {catVendors.length > 0 && (
                   <div className="flex flex-col gap-1.5 pt-1">
-                    {catVendors.map(v => <VendorInviteRow key={v.vendor_id} v={v} inviteState={inviteState[v.vendor_id] ?? "idle"} onInvite={() => sendInvite(v.vendor_id)} />)}
+                    {catVendors.map(v => (
+                    <div key={v.vendor_id} className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-zinc-400 truncate">{v.business_name}</span>
+                      {v.square_connected ? (
+                        <span className="flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 shrink-0">
+                          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                          Square Connected
+                        </span>
+                      ) : (
+                        <span className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 shrink-0">
+                          Square Not Connected
+                        </span>
+                      )}
+                    </div>
+                  ))}
                   </div>
                 )}
               </div>
@@ -2359,7 +2319,21 @@ function SplitsTab({ eventId }: { eventId: string }) {
 
               {catVendors.length > 0 && (
                 <div className="flex flex-col gap-1.5 pt-1">
-                  {catVendors.map(v => <VendorInviteRow key={v.vendor_id} v={v} inviteState={inviteState[v.vendor_id] ?? "idle"} onInvite={() => sendInvite(v.vendor_id)} />)}
+                  {catVendors.map(v => (
+                    <div key={v.vendor_id} className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-zinc-400 truncate">{v.business_name}</span>
+                      {v.square_connected ? (
+                        <span className="flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 shrink-0">
+                          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                          Square Connected
+                        </span>
+                      ) : (
+                        <span className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 shrink-0">
+                          Square Not Connected
+                        </span>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
