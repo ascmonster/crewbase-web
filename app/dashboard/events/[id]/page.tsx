@@ -2076,7 +2076,7 @@ const SPLIT_DEF: VendorSplitState = {
   square_location_id: null, saving: false, error: null, saved: false, locked: false,
 };
 
-function SplitsTab({ eventId }: { eventId: string }) {
+function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: string }) {
   const [loading,         setLoading]         = useState(true);
   const [error,           setError]           = useState<string | null>(null);
   const [vendors,         setVendors]         = useState<EventVendorWithCategory[]>([]);
@@ -2200,216 +2200,280 @@ function SplitsTab({ eventId }: { eventId: string }) {
   const hasAnyRevenue = Object.values(txTotals).some(n => n > 0);
   const fmtD = (n: number) => `$${(Math.abs(n) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
 
+  const isTerminal = paymentMode === "square_terminal";
+  const isStripe   = paymentMode === "stripe_automated" || paymentMode === "stripe";
+
+  // Mode indicator badge config
+  const modeBadge = isTerminal
+    ? { label: "Square Terminal Mode", cls: "border-amber-500/30 bg-amber-500/10 text-amber-400" }
+    : isStripe
+    ? { label: "Stripe Mode",          cls: "border-zinc-500/30 bg-zinc-500/10 text-zinc-400" }
+    : { label: "Square Register Mode", cls: "border-zinc-500/30 bg-zinc-500/10 text-zinc-400" };
+
   return (
     <div className="flex flex-col gap-6">
 
-      {/* SQUARE INTEGRATION */}
-      <div className="flex flex-col gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
-        <div className="flex items-center justify-between">
-          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Square Integration</p>
-          {squareConnected === null ? (
-            <span className="text-xs text-zinc-600">Checking…</span>
-          ) : squareConnected ? (
-            <span className="flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-400">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-              Square Connected
-            </span>
-          ) : (
-            <a
-              href={`/api/square/connect?event_id=${eventId}`}
-              className="rounded-lg bg-white/[0.06] border border-white/[0.08] px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/[0.10] transition-colors"
-            >
-              Connect Square
-            </a>
-          )}
-        </div>
-        {squareConnected === false && (
-          <p className="text-xs text-zinc-600">Connect your Square account to enable payment splits at this event</p>
-        )}
+      {/* MODE INDICATOR */}
+      <div>
+        <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${modeBadge.cls}`}>
+          {modeBadge.label}
+        </span>
       </div>
 
-      {/* SECTION 1 — SPLIT SETTINGS */}
-      <div className="flex flex-col gap-3">
-        <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Split Settings</p>
-        {vendors.length === 0 && (
-          <p className="text-xs text-zinc-600">No vendors on this event yet.</p>
-        )}
-        {categories.map((cat) => {
-          const s = splits[cat] ?? SPLIT_DEF;
-          const catVendors = vendorsByCategory[cat] ?? [];
+      {/* Stripe: full Coming Soon */}
+      {isStripe && (
+        <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-12 text-center">
+          <p className="text-sm font-medium text-zinc-400 mb-1">Stripe Automated</p>
+          <p className="text-xs text-zinc-600">Stripe payment mode is coming soon. Switch to Square Register or Square Terminal to manage splits.</p>
+        </div>
+      )}
 
-          if (s.locked) {
-            return (
-              <div key={cat} className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-semibold text-white">{cat}</p>
-                  <span className="text-xs text-zinc-500">🔒 Split Locked</span>
-                </div>
-                <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs font-medium uppercase tracking-wider text-zinc-600">Vendor %</span>
-                    <span className="text-sm text-zinc-300">{s.vendor_percentage}%</span>
-                  </div>
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs font-medium uppercase tracking-wider text-zinc-600">Promoter %</span>
-                    <span className="text-sm text-zinc-300">{s.promoter_percentage}%</span>
-                  </div>
-                </div>
-                {catVendors.length > 0 && (
-                  <div className="flex flex-col gap-1.5 pt-1">
-                    {catVendors.map(v => (
-                    <div key={v.vendor_id} className="flex items-center justify-between gap-2">
-                      <span className="text-xs text-zinc-400 truncate">{v.business_name}</span>
-                      {v.square_connected ? (
-                        <span className="flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 shrink-0">
-                          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-                          Square Connected
-                        </span>
-                      ) : (
-                        <span className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 shrink-0">
-                          Square Not Connected
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                  </div>
-                )}
-              </div>
-            );
-          }
-
-          return (
-            <div key={cat} className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
-              <p className="text-sm font-semibold text-white">{cat}</p>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Vendor %</label>
-                  <input
-                    type="number" min="0" max="100" step="1"
-                    value={s.vendor_percentage}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      patch(cat, {
-                        vendor_percentage:   val,
-                        promoter_percentage: String(Math.max(0, 100 - (parseFloat(val) || 0))),
-                      });
-                    }}
-                    className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [appearance:textfield]"
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Promoter %</label>
-                  <input
-                    type="number"
-                    value={s.promoter_percentage}
-                    readOnly
-                    className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-sm text-zinc-400 outline-none cursor-not-allowed [appearance:textfield]"
-                  />
-                </div>
-              </div>
-
-              {s.error && <p className="text-xs text-red-400">{s.error}</p>}
-              <button
-                onClick={() => saveSplit(cat)}
-                disabled={s.saving}
-                className="self-start rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-black transition-colors hover:bg-amber-400 disabled:opacity-40"
-              >
-                {s.saving ? "Saving…" : "Save Split"}
-              </button>
-
-              {catVendors.length > 0 && (
-                <div className="flex flex-col gap-1.5 pt-1">
-                  {catVendors.map(v => (
-                    <div key={v.vendor_id} className="flex items-center justify-between gap-2">
-                      <span className="text-xs text-zinc-400 truncate">{v.business_name}</span>
-                      {v.square_connected ? (
-                        <span className="flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 shrink-0">
-                          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-                          Square Connected
-                        </span>
-                      ) : (
-                        <span className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 shrink-0">
-                          Square Not Connected
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
+      {!isStripe && (
+        <>
+          {/* SQUARE INTEGRATION */}
+          <div className="flex flex-col gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Square Integration</p>
+              {squareConnected === null ? (
+                <span className="text-xs text-zinc-600">Checking…</span>
+              ) : squareConnected ? (
+                <span className="flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-400">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                  Square Connected
+                </span>
+              ) : (
+                <a
+                  href={`/api/square/connect?event_id=${eventId}`}
+                  className="rounded-lg bg-white/[0.06] border border-white/[0.08] px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/[0.10] transition-colors"
+                >
+                  Connect Square
+                </a>
               )}
             </div>
-          );
-        })}
-      </div>
-
-      {/* SECTION 2 — TRANSACTION BREAKDOWN */}
-      <div className="flex flex-col gap-3">
-        <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Transaction Breakdown</p>
-        {!hasAnyRevenue ? (
-          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-8 text-center">
-            <p className="text-sm text-zinc-500">No transaction data yet</p>
+            {squareConnected === false && (
+              <p className="text-xs text-zinc-600">Connect your Square account to enable payment splits at this event</p>
+            )}
           </div>
-        ) : (
-          <div className="flex flex-col gap-5">
-            {categories.map((cat) => {
-              const catVendors = (vendorsByCategory[cat] ?? []).filter(v => (txTotals[v.vendor_id] || 0) > 0);
-              if (catVendors.length === 0) return null;
 
-              const catTotalCents = catVendors.reduce((sum, v) => sum + (txTotals[v.vendor_id] || 0), 0);
-              const splitSet = !!splits[cat];
-              const vp = splitSet ? (parseFloat(splits[cat].vendor_percentage) || 0) : null;
-              const pp = splitSet ? (parseFloat(splits[cat].promoter_percentage) || 0) : null;
+          {/* TERMINAL SETUP — square_terminal only */}
+          {isTerminal && (
+            <div className="flex flex-col gap-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Terminal Setup</p>
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-6 text-center">
+                <p className="text-sm font-medium text-zinc-400 mb-1">Square Terminal pairing coming soon</p>
+                <p className="text-xs text-zinc-600">Once paired, vendors will use the Crewbase app as their POS</p>
+              </div>
+            </div>
+          )}
 
-              return (
-                <div key={cat} className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between pb-1 border-b border-white/[0.06]">
-                    <p className="text-sm font-semibold text-white">{cat}</p>
-                    <p className="text-sm font-semibold text-white">{fmtD(catTotalCents)}</p>
-                  </div>
-                  {catVendors.map((v) => {
-                    const totalCents = txTotals[v.vendor_id] || 0;
-                    return (
-                      <div key={v.vendor_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 flex flex-col gap-1.5">
-                        <p className="text-xs font-semibold text-zinc-300">{v.business_name}</p>
-                        <div className="flex justify-between text-xs">
-                          <span className="text-zinc-400">Total Sales</span>
-                          <span className="text-white">{fmtD(totalCents)}</span>
+          {/* SECTION 1 — SPLIT SETTINGS */}
+          {isTerminal ? (
+            <div className="flex flex-col gap-3 opacity-40 pointer-events-none select-none">
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Split Settings</p>
+                <span className="text-xs text-zinc-600">— Available after Terminal is paired</span>
+              </div>
+              <div className="rounded-xl border border-dashed border-white/[0.06] px-4 py-6 text-center">
+                <p className="text-xs text-zinc-600">Available after Terminal is paired</p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Split Settings</p>
+              {vendors.length === 0 && (
+                <p className="text-xs text-zinc-600">No vendors on this event yet.</p>
+              )}
+              {categories.map((cat) => {
+                const s = splits[cat] ?? SPLIT_DEF;
+                const catVendors = vendorsByCategory[cat] ?? [];
+
+                if (s.locked) {
+                  return (
+                    <div key={cat} className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-white">{cat}</p>
+                        <span className="text-xs text-zinc-500">🔒 Split Locked</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-xs font-medium uppercase tracking-wider text-zinc-600">Vendor %</span>
+                          <span className="text-sm text-zinc-300">{s.vendor_percentage}%</span>
                         </div>
-                        {vp !== null && pp !== null ? (
-                          <>
-                            <div className="flex justify-between text-xs">
-                              <span className="text-zinc-400">Vendor Cut ({vp}%)</span>
-                              <span className="text-zinc-300">{fmtD(totalCents * (vp / 100))}</span>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-xs font-medium uppercase tracking-wider text-zinc-600">Promoter %</span>
+                          <span className="text-sm text-zinc-300">{s.promoter_percentage}%</span>
+                        </div>
+                      </div>
+                      {catVendors.length > 0 && (
+                        <div className="flex flex-col gap-1.5 pt-1">
+                          {catVendors.map(v => (
+                            <div key={v.vendor_id} className="flex items-center justify-between gap-2">
+                              <span className="text-xs text-zinc-400 truncate">{v.business_name}</span>
+                              {v.square_connected ? (
+                                <span className="flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 shrink-0">
+                                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                                  Square Connected
+                                </span>
+                              ) : (
+                                <span className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 shrink-0">
+                                  Square Not Connected
+                                </span>
+                              )}
                             </div>
-                            <div className="flex justify-between text-xs">
-                              <span className="text-zinc-400">Promoter Cut ({pp}%)</span>
-                              <span className="text-zinc-300">{fmtD(totalCents * (pp / 100))}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div key={cat} className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
+                    <p className="text-sm font-semibold text-white">{cat}</p>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Vendor %</label>
+                        <input
+                          type="number" min="0" max="100" step="1"
+                          value={s.vendor_percentage}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            patch(cat, {
+                              vendor_percentage:   val,
+                              promoter_percentage: String(Math.max(0, 100 - (parseFloat(val) || 0))),
+                            });
+                          }}
+                          className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-amber-500/50 [appearance:textfield]"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">Promoter %</label>
+                        <input
+                          type="number"
+                          value={s.promoter_percentage}
+                          readOnly
+                          className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-sm text-zinc-400 outline-none cursor-not-allowed [appearance:textfield]"
+                        />
+                      </div>
+                    </div>
+
+                    {s.error && <p className="text-xs text-red-400">{s.error}</p>}
+                    <button
+                      onClick={() => saveSplit(cat)}
+                      disabled={s.saving}
+                      className="self-start rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-black transition-colors hover:bg-amber-400 disabled:opacity-40"
+                    >
+                      {s.saving ? "Saving…" : "Save Split"}
+                    </button>
+
+                    {catVendors.length > 0 && (
+                      <div className="flex flex-col gap-1.5 pt-1">
+                        {catVendors.map(v => (
+                          <div key={v.vendor_id} className="flex items-center justify-between gap-2">
+                            <span className="text-xs text-zinc-400 truncate">{v.business_name}</span>
+                            {v.square_connected ? (
+                              <span className="flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 shrink-0">
+                                <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                                Square Connected
+                              </span>
+                            ) : (
+                              <span className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 shrink-0">
+                                Square Not Connected
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* SECTION 2 — TRANSACTION BREAKDOWN */}
+          {isTerminal ? (
+            <div className="flex flex-col gap-3 opacity-40 pointer-events-none select-none">
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Transaction Breakdown</p>
+                <span className="text-xs text-zinc-600">— Available after Terminal is paired</span>
+              </div>
+              <div className="rounded-xl border border-dashed border-white/[0.06] px-4 py-6 text-center">
+                <p className="text-xs text-zinc-600">Available after Terminal is paired</p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Transaction Breakdown</p>
+              {!hasAnyRevenue ? (
+                <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-8 text-center">
+                  <p className="text-sm text-zinc-500">No transaction data yet</p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-5">
+                  {categories.map((cat) => {
+                    const catVendors = (vendorsByCategory[cat] ?? []).filter(v => (txTotals[v.vendor_id] || 0) > 0);
+                    if (catVendors.length === 0) return null;
+
+                    const catTotalCents = catVendors.reduce((sum, v) => sum + (txTotals[v.vendor_id] || 0), 0);
+                    const splitSet = !!splits[cat];
+                    const vp = splitSet ? (parseFloat(splits[cat].vendor_percentage) || 0) : null;
+                    const pp = splitSet ? (parseFloat(splits[cat].promoter_percentage) || 0) : null;
+
+                    return (
+                      <div key={cat} className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between pb-1 border-b border-white/[0.06]">
+                          <p className="text-sm font-semibold text-white">{cat}</p>
+                          <p className="text-sm font-semibold text-white">{fmtD(catTotalCents)}</p>
+                        </div>
+                        {catVendors.map((v) => {
+                          const totalCents = txTotals[v.vendor_id] || 0;
+                          return (
+                            <div key={v.vendor_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 flex flex-col gap-1.5">
+                              <p className="text-xs font-semibold text-zinc-300">{v.business_name}</p>
+                              <div className="flex justify-between text-xs">
+                                <span className="text-zinc-400">Total Sales</span>
+                                <span className="text-white">{fmtD(totalCents)}</span>
+                              </div>
+                              {vp !== null && pp !== null ? (
+                                <>
+                                  <div className="flex justify-between text-xs">
+                                    <span className="text-zinc-400">Vendor Cut ({vp}%)</span>
+                                    <span className="text-zinc-300">{fmtD(totalCents * (vp / 100))}</span>
+                                  </div>
+                                  <div className="flex justify-between text-xs">
+                                    <span className="text-zinc-400">Promoter Cut ({pp}%)</span>
+                                    <span className="text-zinc-300">{fmtD(totalCents * (pp / 100))}</span>
+                                  </div>
+                                </>
+                              ) : (
+                                <p className="text-xs text-zinc-600 italic">Set split percentages above first</p>
+                              )}
                             </div>
-                          </>
-                        ) : (
-                          <p className="text-xs text-zinc-600 italic">Set split percentages above first</p>
-                        )}
+                          );
+                        })}
                       </div>
                     );
                   })}
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+              )}
+            </div>
+          )}
 
-      {/* SECTION 3 — SETTLE EVENT placeholder */}
-      <div className="relative">
-        <div className="absolute inset-0 z-10 flex items-center justify-center">
-          <span className="rounded-full border border-zinc-500/40 bg-[#0a0a0a] px-3 py-1 text-xs font-semibold text-zinc-500">Coming Soon</span>
-        </div>
-        <div className="pointer-events-none select-none flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-6 opacity-40">
-          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Settle Event</p>
-          <button disabled className="self-start rounded-lg border border-white/[0.08] px-4 py-2 text-xs font-medium text-zinc-500">Settle Event</button>
-          <p className="text-xs text-zinc-600">Finalises the event, confirms all splits and generates Crewbase invoice — coming soon</p>
-        </div>
-      </div>
+          {/* SECTION 3 — SETTLE EVENT placeholder */}
+          <div className="relative">
+            <div className="absolute inset-0 z-10 flex items-center justify-center">
+              <span className="rounded-full border border-zinc-500/40 bg-[#0a0a0a] px-3 py-1 text-xs font-semibold text-zinc-500">Coming Soon</span>
+            </div>
+            <div className="pointer-events-none select-none flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-6 opacity-40">
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Settle Event</p>
+              <button disabled className="self-start rounded-lg border border-white/[0.08] px-4 py-2 text-xs font-medium text-zinc-500">Settle Event</button>
+              <p className="text-xs text-zinc-600">Finalises the event, confirms all splits and generates Crewbase invoice — coming soon</p>
+            </div>
+          </div>
+        </>
+      )}
 
     </div>
   );
@@ -2733,7 +2797,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         />
       )}
       {activeTab === "revenue" && <RevenueTab eventId={event.id} />}
-      {activeTab === "splits"  && <SplitsTab  eventId={event.id} />}
+      {activeTab === "splits"  && <SplitsTab  eventId={event.id} paymentMode={event.payment_mode ?? "square_register"} />}
 
       {/* Modals */}
       {showDateEdit && (
