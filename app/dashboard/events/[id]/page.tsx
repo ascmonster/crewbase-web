@@ -2113,8 +2113,15 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
   const [vendors,            setVendors]            = useState<EventVendorWithCategory[]>([]);
   const [txTotals,           setTxTotals]           = useState<Record<string, number>>({});
   const [splits,             setSplits]             = useState<Record<string, VendorSplitState>>({});
-  const [squareConnected,    setSquareConnected]    = useState<boolean | null>(null);
-  const [squareMerchantName, setSquareMerchantName] = useState<string | null>(null);
+  const [squareConnected,         setSquareConnected]         = useState<boolean | null>(null);
+  const [squareMerchantName,      setSquareMerchantName]      = useState<string | null>(null);
+  const [squareDisconnectConfirm, setSquareDisconnectConfirm] = useState(false);
+
+  async function disconnectSquare() {
+    const supabase = createClient();
+    await supabase.from("event_square_config").delete().eq("event_id", eventId);
+    window.location.reload();
+  }
 
   useEffect(() => {
     (async () => {
@@ -2270,12 +2277,23 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
               {squareConnected === null ? (
                 <span className="text-xs text-zinc-600">Checking…</span>
               ) : squareConnected ? (
-                <div className="flex flex-col items-end gap-0.5">
-                  <span className="flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-400">
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-                    Square Connected
-                  </span>
-                  {squareMerchantName && (
+                <div className="flex flex-col items-end gap-1">
+                  {squareDisconnectConfirm ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-zinc-400">Disconnect Square?</span>
+                      <button onClick={disconnectSquare} className="text-xs font-medium text-rose-400 hover:text-rose-300 transition-colors">Confirm</button>
+                      <button onClick={() => setSquareDisconnectConfirm(false)} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">Cancel</button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-400">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                        Square Connected
+                      </span>
+                      <button onClick={() => setSquareDisconnectConfirm(true)} className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Disconnect</button>
+                    </div>
+                  )}
+                  {squareMerchantName && !squareDisconnectConfirm && (
                     <p className="text-xs text-zinc-500">Connected: {squareMerchantName}</p>
                   )}
                 </div>
