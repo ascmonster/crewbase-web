@@ -2059,6 +2059,7 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
   const [splits,             setSplits]             = useState<Record<string, VendorSplitState>>({});
   const [squareConnected,         setSquareConnected]         = useState<boolean | null>(null);
   const [squareMerchantName,      setSquareMerchantName]      = useState<string | null>(null);
+  const [squareDeviceCodeId,      setSquareDeviceCodeId]      = useState<string | null>(null);
   const [squareDisconnectConfirm, setSquareDisconnectConfirm] = useState(false);
   const [pairingVendor,  setPairingVendor]  = useState<{ vendor_id: string; vendor_name: string } | null>(null);
   const [pairingCode,    setPairingCode]    = useState<{ code: string; id: string } | null>(null);
@@ -2114,11 +2115,12 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
         // 0. Square connection status
         const { data: sqCfg } = await supabase
           .from("event_square_config")
-          .select("square_access_token, square_merchant_name")
+          .select("square_access_token, square_merchant_name, square_device_code_id")
           .eq("event_id", eventId)
           .maybeSingle();
         setSquareConnected(!!(sqCfg?.square_access_token));
         setSquareMerchantName(sqCfg?.square_merchant_name ?? null);
+        setSquareDeviceCodeId(sqCfg?.square_device_code_id ?? null);
 
         // 1. Vendors with category
         const { data: evRows } = await supabase
@@ -2298,25 +2300,23 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
           {isTerminal && (
             <div className="flex flex-col gap-2">
               <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Terminal Setup</p>
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-6 text-center">
-                <p className="text-sm font-medium text-zinc-400 mb-1">Square Terminal pairing coming soon</p>
-                <p className="text-xs text-zinc-600">Once paired, vendors will use the Crewbase app as their POS</p>
+              <div className="flex items-center rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
+                {squareDeviceCodeId ? (
+                  <span className="flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-400">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                    Terminal Paired
+                  </span>
+                ) : (
+                  <span className="rounded border border-zinc-700 px-2 py-1 text-xs font-medium text-zinc-500">
+                    No Terminal Paired
+                  </span>
+                )}
               </div>
             </div>
           )}
 
           {/* SECTION 1 — SPLIT SETTINGS */}
-          {isTerminal ? (
-            <div className="flex flex-col gap-3 opacity-40 pointer-events-none select-none">
-              <div className="flex items-center gap-2">
-                <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Split Settings</p>
-                <span className="text-xs text-zinc-600">— Available after Terminal is paired</span>
-              </div>
-              <div className="rounded-xl border border-dashed border-white/[0.06] px-4 py-6 text-center">
-                <p className="text-xs text-zinc-600">Available after Terminal is paired</p>
-              </div>
-            </div>
-          ) : (
+          {squareConnected && (
             <div className="flex flex-col gap-3">
               <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Split Settings</p>
               {vendors.length === 0 && (
