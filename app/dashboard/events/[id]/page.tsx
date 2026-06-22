@@ -2060,6 +2060,34 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
   const [squareConnected,         setSquareConnected]         = useState<boolean | null>(null);
   const [squareMerchantName,      setSquareMerchantName]      = useState<string | null>(null);
   const [squareDisconnectConfirm, setSquareDisconnectConfirm] = useState(false);
+  const [pairingVendor,  setPairingVendor]  = useState<{ vendor_id: string; vendor_name: string } | null>(null);
+  const [pairingCode,    setPairingCode]    = useState<{ code: string; id: string } | null>(null);
+  const [pairLoading,    setPairLoading]    = useState(false);
+  const [pairError,      setPairError]      = useState<string | null>(null);
+
+  async function pairTerminal(vendor_id: string, vendor_name: string) {
+    setPairingVendor({ vendor_id, vendor_name });
+    setPairingCode(null);
+    setPairError(null);
+    setPairLoading(true);
+    try {
+      const res = await fetch("/api/square/create-device-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_id: eventId, vendor_id }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setPairError(data.error ?? "Failed to create device code");
+      } else {
+        setPairingCode({ code: data.code, id: data.id });
+      }
+    } catch (e: any) {
+      setPairError(e.message);
+    } finally {
+      setPairLoading(false);
+    }
+  }
 
   async function disconnectSquare() {
     const supabase = createClient();
@@ -2320,16 +2348,26 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
                           {catVendors.map(v => (
                             <div key={v.vendor_id} className="flex items-center justify-between gap-2">
                               <span className="text-xs text-zinc-400 truncate">{v.business_name}</span>
-                              {v.square_connected ? (
-                                <span className="flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 shrink-0">
-                                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-                                  Square Connected
-                                </span>
-                              ) : (
-                                <span className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 shrink-0">
-                                  Square Not Connected
-                                </span>
-                              )}
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {v.square_connected ? (
+                                  <span className="flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
+                                    <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                                    Square Connected
+                                  </span>
+                                ) : (
+                                  <span className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">
+                                    Square Not Connected
+                                  </span>
+                                )}
+                                {isTerminal && v.square_connected && (
+                                  <button
+                                    onClick={() => pairTerminal(v.vendor_id, v.business_name)}
+                                    className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400 hover:bg-amber-500/20 transition-colors"
+                                  >
+                                    Pair Terminal
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -2484,6 +2522,43 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
             </div>
           </div>
         </>
+      )}
+
+      {/* PAIR TERMINAL MODAL */}
+      {pairingVendor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+          <div className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-zinc-900 px-8 py-8 flex flex-col items-center gap-6">
+            {pairLoading ? (
+              <p className="text-sm text-zinc-400">Creating device code…</p>
+            ) : pairError ? (
+              <>
+                <p className="text-sm text-red-400 text-center">{pairError}</p>
+                <button
+                  onClick={() => { setPairingVendor(null); setPairError(null); }}
+                  className="rounded-lg border border-white/[0.08] px-6 py-2 text-sm font-semibold text-white hover:bg-white/[0.06] transition-colors"
+                >
+                  Close
+                </button>
+              </>
+            ) : pairingCode ? (
+              <>
+                <div className="text-center flex flex-col gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">
+                    Enter this code on your Square Terminal
+                  </p>
+                  <p className="text-4xl font-bold tracking-widest text-white">{pairingCode.code}</p>
+                  <p className="text-xs text-zinc-600">{pairingVendor.vendor_name}</p>
+                </div>
+                <button
+                  onClick={() => { setPairingVendor(null); setPairingCode(null); }}
+                  className="rounded-lg bg-white/[0.06] border border-white/[0.08] px-8 py-2.5 text-sm font-semibold text-white hover:bg-white/[0.10] transition-colors"
+                >
+                  Done
+                </button>
+              </>
+            ) : null}
+          </div>
+        </div>
       )}
 
     </div>
