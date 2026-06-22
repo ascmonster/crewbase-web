@@ -2120,13 +2120,18 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
   async function disconnectSquare() {
     const supabase = createClient();
     console.log("Attempting disconnect for event_id:", eventId);
-    const { error } = await supabase.from("event_square_config").delete().eq("event_id", eventId);
+    const { error } = await supabase
+      .from("event_square_config")
+      .delete()
+      .eq("event_id", eventId);
     if (error) {
       console.log(error);
     } else {
       console.log("Disconnect successful");
+      setSquareConnected(false);
+      setSquareMerchantName(null);
+      setSquareDisconnectConfirm(false);
     }
-    window.location.reload();
   }
 
   useEffect(() => {
