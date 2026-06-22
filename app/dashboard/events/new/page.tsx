@@ -219,7 +219,7 @@ export default function NewEventPage() {
                     </span>
                   </div>
                   <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
-                    Fully automated splits. Crewbase provides Square Terminal hardware. Vendor uses Crewbase app as POS.
+                    Fully automated splits. Vendor uses Crewbase app as POS with Square Terminal. Split happens automatically at payment time.
                   </p>
                 </div>
                 <div className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-colors ${
@@ -246,7 +246,7 @@ export default function NewEventPage() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-semibold text-white">Square Register</span>
                     <span className="rounded-full bg-zinc-500/20 border border-zinc-500/30 px-2 py-0.5 text-[10px] font-bold text-zinc-400 uppercase tracking-wide">
-                      Most Compatible
+                      Manual Settlement
                     </span>
                   </div>
                   <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
