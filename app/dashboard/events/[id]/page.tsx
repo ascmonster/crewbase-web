@@ -20,6 +20,7 @@ type EventRow = {
   status: string;
   description: string | null;
   promoter_id: string;
+  payment_mode: string | null;
 };
 
 type VendorProfile = {
@@ -2487,7 +2488,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
       // 1. Event
       const { data: ev, error: evErr } = await supabase
         .from("events")
-        .select("id, name, location, start_date, end_date, timezone, status, description, promoter_id")
+        .select("id, name, location, start_date, end_date, timezone, status, description, promoter_id, payment_mode")
         .eq("id", id)
         .single();
 
