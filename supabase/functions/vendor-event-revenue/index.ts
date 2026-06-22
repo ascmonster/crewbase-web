@@ -208,7 +208,7 @@ serve(async (req) => {
     // Vendor profiles (Square tokens + business names)
     const { data: profiles } = await supabase
       .from('vendor_profiles')
-      .select('user_id, business_name, square_access_token, square_connected')
+      .select('user_id, business_name, square_access_token, square_connected, square_merchant_name')
       .in('user_id', allVendorIds)
 
     const profileByVendor: Record<string, any> = {}
@@ -335,11 +335,12 @@ serve(async (req) => {
       }
 
       const vendorResult = {
-        vendor_id:        vendorId,
-        business_name:    profile?.business_name ?? 'Vendor',
-        square_connected: profile?.square_connected ?? false,
-        trucks:           truckResults,
-        vendor_total:     vendorTotal,
+        vendor_id:           vendorId,
+        business_name:       profile?.business_name ?? 'Vendor',
+        square_connected:    profile?.square_connected ?? false,
+        square_merchant_name: profile?.square_merchant_name ?? null,
+        trucks:              truckResults,
+        vendor_total:        vendorTotal,
       }
       vendorResults.push(vendorResult)
       eventTotal += vendorTotal
