@@ -74,6 +74,29 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // Fetch merchant business name from Square
+  const merchantApiBase = isSandbox
+    ? "https://connect.squareupsandbox.com/v2"
+    : "https://connect.squareup.com/v2";
+
+  let squareMerchantName: string | null = null;
+  try {
+    const merchantRes = await fetch(`${merchantApiBase}/merchants/me`, {
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+        "Square-Version": "2024-01-18",
+      },
+    });
+    if (merchantRes.ok) {
+      const merchantData = await merchantRes.json();
+      squareMerchantName = merchantData.merchant?.business_name ?? null;
+    } else {
+      console.error("Square merchants/me error:", merchantRes.status);
+    }
+  } catch (e) {
+    console.error("Square merchants/me fetch threw:", e);
+  }
+
   // Persist to Supabase using service role key (bypasses RLS)
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -94,6 +117,7 @@ export async function GET(request: NextRequest) {
       promoter_id,
       square_access_token: tokenData.access_token,
       square_merchant_id: tokenData.merchant_id ?? null,
+      square_merchant_name: squareMerchantName,
       token_expires_at: expiresAt,
     },
     { onConflict: "event_id" }
