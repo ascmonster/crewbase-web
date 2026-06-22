@@ -6,8 +6,13 @@ const CORS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const SQUARE_API = 'https://connect.squareup.com/v2'
 const SQ_VERSION = '2024-11-20'
+
+function squareApiBase(): string {
+  return Deno.env.get('SQUARE_ENVIRONMENT') === 'sandbox'
+    ? 'https://connect.squareupsandbox.com/v2'
+    : 'https://connect.squareup.com/v2'
+}
 
 function jsonRes(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -29,7 +34,7 @@ async function squarePayments(
       end_time: endTime,
       sort_order: 'DESC',
     })
-    const url = `${SQUARE_API}/payments?${params}`
+    const url = `${squareApiBase()}/payments?${params}`
     console.log('[square] GET', url)
     console.log('[square] location_id:', locationId)
     console.log('[square] begin_time:', beginTime)
@@ -105,7 +110,7 @@ async function storePaymentData(
 
   for (const payment of payments.filter((p: any) => p.order_id)) {
     try {
-      const orderRes = await fetch(`${SQUARE_API}/orders/${payment.order_id}`, {
+      const orderRes = await fetch(`${squareApiBase()}/orders/${payment.order_id}`, {
         headers: { Authorization: `Bearer ${token}`, 'Square-Version': SQ_VERSION },
       })
       if (!orderRes.ok) {
