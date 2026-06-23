@@ -11,29 +11,38 @@ const SCOPES = [
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
+  const type = searchParams.get("type") ?? "promoter";
+  const user_id = searchParams.get("user_id");
   const event_id = searchParams.get("event_id");
 
-  if (!event_id) {
-    return NextResponse.json({ error: "Missing event_id" }, { status: 400 });
-  }
+  let state: string;
 
-  // Resolve the logged-in promoter's user ID by reading the session cookies
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll: () => request.cookies.getAll(),
-        setAll: () => {}, // read-only in a GET handler
-      },
+  if (type === "vendor") {
+    if (!user_id) {
+      return NextResponse.json({ error: "Missing user_id" }, { status: 400 });
     }
-  );
-  const { data: { user } } = await supabase.auth.getUser();
-  const promoter_id = user?.id ?? null;
-
-  const state = Buffer.from(
-    JSON.stringify({ event_id, promoter_id })
-  ).toString("base64");
+    state = Buffer.from(JSON.stringify({ type: "vendor", user_id })).toString("base64");
+  } else {
+    if (!event_id) {
+      return NextResponse.json({ error: "Missing event_id" }, { status: 400 });
+    }
+    // Resolve the logged-in promoter's user ID by reading the session cookies
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll: () => request.cookies.getAll(),
+          setAll: () => {}, // read-only in a GET handler
+        },
+      }
+    );
+    const { data: { user } } = await supabase.auth.getUser();
+    const promoter_id = user?.id ?? null;
+    state = Buffer.from(
+      JSON.stringify({ type: "promoter", event_id, promoter_id })
+    ).toString("base64");
+  }
 
   const isSandbox = process.env.SQUARE_ENVIRONMENT !== "production";
   const baseUrl = isSandbox

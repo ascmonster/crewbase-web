@@ -15,17 +15,21 @@ export async function GET(request: NextRequest) {
   }
 
   // Decode state
-  let event_id: string;
-  let promoter_id: string | null;
+  let type: string = "promoter";
+  let event_id: string | undefined;
+  let promoter_id: string | null = null;
+  let vendor_user_id: string | undefined;
   try {
     const decoded = JSON.parse(Buffer.from(stateParam, "base64").toString("utf-8"));
+    type = decoded.type ?? "promoter";
     event_id = decoded.event_id;
     promoter_id = decoded.promoter_id ?? null;
+    vendor_user_id = decoded.user_id;
   } catch {
     return NextResponse.redirect(`${origin}/dashboard?square_error=invalid_state`);
   }
 
-  if (!event_id) {
+  if (type !== "vendor" && !event_id) {
     return NextResponse.redirect(`${origin}/dashboard?square_error=missing_event_id`);
   }
 
@@ -62,6 +66,9 @@ export async function GET(request: NextRequest) {
     });
     tokenData = await tokenRes.json();
   } catch {
+    if (type === "vendor") {
+      return NextResponse.redirect(`crewbase://square-callback?error=token_fetch_failed`);
+    }
     return NextResponse.redirect(
       `${origin}/dashboard/events/${event_id}?tab=revenue&square_error=token_fetch_failed`
     );
@@ -69,6 +76,9 @@ export async function GET(request: NextRequest) {
 
   if (!tokenData.access_token) {
     const msg = encodeURIComponent(tokenData.message ?? tokenData.error ?? "token_error");
+    if (type === "vendor") {
+      return NextResponse.redirect(`crewbase://square-callback?error=${msg}`);
+    }
     return NextResponse.redirect(
       `${origin}/dashboard/events/${event_id}?tab=revenue&square_error=${msg}`
     );
@@ -106,6 +116,37 @@ export async function GET(request: NextRequest) {
   }
 
   const admin = createSupabaseAdmin(supabaseUrl, serviceRoleKey);
+
+  // ── Vendor flow ───────────────────────────────────────────────────────────
+
+  if (type === "vendor") {
+    if (!vendor_user_id) {
+      return NextResponse.redirect(`crewbase://square-callback?error=missing_user_id`);
+    }
+
+    const { error: dbError } = await admin
+      .from("vendor_profiles")
+      .update({
+        square_access_token: tokenData.access_token,
+        square_merchant_id:   tokenData.merchant_id ?? null,
+        square_merchant_name: squareMerchantName,
+        square_connected:     true,
+      })
+      .eq("user_id", vendor_user_id);
+
+    if (dbError) {
+      console.error("Failed to save vendor Square config:", dbError.message);
+      return NextResponse.redirect(
+        `crewbase://square-callback?error=${encodeURIComponent(dbError.message)}`
+      );
+    }
+
+    return NextResponse.redirect(
+      `crewbase://square-callback?success=true&vendor_id=${encodeURIComponent(vendor_user_id)}`
+    );
+  }
+
+  // ── Promoter flow (existing logic) ────────────────────────────────────────
 
   const expiresAt = tokenData.expires_at
     ? new Date(tokenData.expires_at).toISOString()
