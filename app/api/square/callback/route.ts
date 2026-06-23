@@ -43,6 +43,7 @@ export async function GET(request: NextRequest) {
 
   let tokenData: {
     access_token?: string;
+    refresh_token?: string;
     merchant_id?: string;
     expires_at?: string;
     error?: string;
@@ -126,13 +127,18 @@ export async function GET(request: NextRequest) {
 
     const { error: dbError } = await admin
       .from("vendor_profiles")
-      .update({
-        square_access_token: tokenData.access_token,
-        square_merchant_id:   tokenData.merchant_id ?? null,
-        square_merchant_name: squareMerchantName,
-        square_connected:     true,
-      })
-      .eq("user_id", vendor_user_id);
+      .upsert(
+        {
+          user_id:              vendor_user_id,
+          square_access_token:  tokenData.access_token,
+          square_refresh_token: tokenData.refresh_token ?? null,
+          square_merchant_id:   tokenData.merchant_id ?? null,
+          square_merchant_name: squareMerchantName,
+          square_connected:     true,
+          token_expires_at:     tokenData.expires_at ? new Date(tokenData.expires_at).toISOString() : null,
+        },
+        { onConflict: "user_id" }
+      );
 
     if (dbError) {
       console.error("Failed to save vendor Square config:", dbError.message);
