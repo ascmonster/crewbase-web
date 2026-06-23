@@ -2,11 +2,19 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-const SCOPES = [
+const PROMOTER_SCOPES = [
   "MERCHANT_PROFILE_READ",
   "PAYMENTS_READ",
   "ORDERS_READ",
   "DEVICE_CREDENTIAL_MANAGEMENT",
+].join(" ");
+
+const VENDOR_SCOPES = [
+  "MERCHANT_PROFILE_READ",
+  "PAYMENTS_READ",
+  "ORDERS_READ",
+  "DEVICE_CREDENTIAL_MANAGEMENT",
+  "ITEMS_READ",
 ].join(" ");
 
 export async function GET(request: NextRequest) {
@@ -59,7 +67,8 @@ export async function GET(request: NextRequest) {
   oauthUrl.searchParams.set("state", state);
 
   // Append scope manually so spaces are encoded as %20, not + (URLSearchParams uses +)
-  const finalUrl = `${oauthUrl.toString()}&scope=${SCOPES.replace(/ /g, "%20")}`;
+  const scopes = type === "vendor" ? VENDOR_SCOPES : PROMOTER_SCOPES;
+  const finalUrl = `${oauthUrl.toString()}&scope=${scopes.replace(/ /g, "%20")}`;
 
   return NextResponse.redirect(finalUrl);
 }
