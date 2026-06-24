@@ -135,7 +135,7 @@ export async function GET(request: NextRequest) {
           square_merchant_id:   tokenData.merchant_id ?? null,
           square_merchant_name: squareMerchantName,
           square_connected:     true,
-          token_expires_at:     tokenData.expires_at ? new Date(tokenData.expires_at).toISOString() : null,
+          square_token_expires_at: tokenData.expires_at ? new Date(tokenData.expires_at).toISOString() : null,
         },
         { onConflict: "user_id" }
       );
