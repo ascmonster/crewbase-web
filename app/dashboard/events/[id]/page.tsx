@@ -1737,6 +1737,8 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
   const [vendors,            setVendors]            = useState<EventVendorWithCategory[]>([]);
   const [txTotals,           setTxTotals]           = useState<Record<string, number>>({});
   const [txRows,             setTxRows]             = useState<TxRow[]>([]);
+  const [txPage,             setTxPage]             = useState(1);
+  const TX_PAGE_SIZE = 20;
   const [splits,             setSplits]             = useState<Record<string, VendorSplitState>>({});
   const [squareConnected,         setSquareConnected]         = useState<boolean | null>(null);
   const [squareMerchantName,      setSquareMerchantName]      = useState<string | null>(null);
@@ -1838,6 +1840,7 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
         });
         setTxTotals(totals);
         setTxRows((txData ?? []) as TxRow[]);
+        setTxPage(1);
 
         // 3. Category splits
         const { data: splitRows } = await supabase
@@ -2131,60 +2134,90 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
               <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-8 text-center">
                 <p className="text-sm text-zinc-500">No transactions recorded yet.</p>
               </div>
-            ) : (
-              <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-white/[0.06] text-zinc-500">
-                      <th className="px-4 py-3 text-left font-medium">Date / Time</th>
-                      <th className="px-4 py-3 text-left font-medium">Vendor</th>
-                      <th className="px-4 py-3 text-left font-medium">Category</th>
-                      <th className="px-4 py-3 text-right font-medium">Total</th>
-                      <th className="px-4 py-3 text-right font-medium">Vendor Cut</th>
-                      <th className="px-4 py-3 text-right font-medium">Promoter Cut</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {txRows.map((tx) => {
-                      const vendor = vendors.find(v => v.vendor_id === tx.vendor_id);
-                      const vendorName = vendor?.business_name ?? tx.vendor_id;
-                      const category = vendor?.category ?? "—";
-                      const appFee = tx.app_fee_cents ?? 0;
-                      const vendorCut = tx.amount_cents - appFee;
-                      const dt = tx.square_created_at ?? tx.fetched_at ? new Date((tx.square_created_at ?? tx.fetched_at)!) : null;
-                      const dateStr = dt
-                        ? dt.toLocaleDateString("en-AU", { day: "2-digit", month: "short" }) + " " +
-                          dt.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" })
-                        : "—";
-                      return (
-                        <tr key={tx.transaction_id} className="border-b border-white/[0.04] hover:bg-white/[0.02]">
-                          <td className="px-4 py-2.5 text-zinc-400 whitespace-nowrap">{dateStr}</td>
-                          <td className="px-4 py-2.5 text-zinc-300">{vendorName}</td>
-                          <td className="px-4 py-2.5 text-zinc-500">{category}</td>
-                          <td className="px-4 py-2.5 text-right text-white">{fmtD(tx.amount_cents)}</td>
-                          <td className="px-4 py-2.5 text-right text-zinc-300">{fmtD(vendorCut)}</td>
-                          <td className="px-4 py-2.5 text-right text-zinc-300">{fmtD(appFee)}</td>
+            ) : (() => {
+              const totalPages = Math.ceil(txRows.length / TX_PAGE_SIZE);
+              const pageStart = (txPage - 1) * TX_PAGE_SIZE;
+              const pageEnd = Math.min(pageStart + TX_PAGE_SIZE, txRows.length);
+              const pagedTxRows = txRows.slice(pageStart, pageEnd);
+              return (
+                <>
+                  <p className="text-xs text-zinc-500">
+                    Showing {pageStart + 1}–{pageEnd} of {txRows.length} transactions
+                  </p>
+                  <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-white/[0.06] text-zinc-500">
+                          <th className="px-4 py-3 text-left font-medium">Date / Time</th>
+                          <th className="px-4 py-3 text-left font-medium">Vendor</th>
+                          <th className="px-4 py-3 text-left font-medium">Category</th>
+                          <th className="px-4 py-3 text-right font-medium">Total</th>
+                          <th className="px-4 py-3 text-right font-medium">Vendor Cut</th>
+                          <th className="px-4 py-3 text-right font-medium">Promoter Cut</th>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t border-white/[0.08] bg-white/[0.02] font-semibold">
-                      <td className="px-4 py-3 text-zinc-400" colSpan={3}>Total</td>
-                      <td className="px-4 py-3 text-right text-white">
-                        {fmtD(txRows.reduce((s, t) => s + t.amount_cents, 0))}
-                      </td>
-                      <td className="px-4 py-3 text-right text-zinc-300">
-                        {fmtD(txRows.reduce((s, t) => s + (t.amount_cents - (t.app_fee_cents ?? 0)), 0))}
-                      </td>
-                      <td className="px-4 py-3 text-right text-zinc-300">
-                        {fmtD(txRows.reduce((s, t) => s + (t.app_fee_cents ?? 0), 0))}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
+                      </thead>
+                      <tbody>
+                        {pagedTxRows.map((tx) => {
+                          const vendor = vendors.find(v => v.vendor_id === tx.vendor_id);
+                          const vendorName = vendor?.business_name ?? tx.vendor_id;
+                          const category = vendor?.category ?? "—";
+                          const appFee = tx.app_fee_cents ?? 0;
+                          const vendorCut = tx.amount_cents - appFee;
+                          const dt = tx.square_created_at ?? tx.fetched_at ? new Date((tx.square_created_at ?? tx.fetched_at)!) : null;
+                          const dateStr = dt
+                            ? dt.toLocaleDateString("en-AU", { day: "2-digit", month: "short" }) + " " +
+                              dt.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" })
+                            : "—";
+                          return (
+                            <tr key={tx.transaction_id} className="border-b border-white/[0.04] hover:bg-white/[0.02]">
+                              <td className="px-4 py-2.5 text-zinc-400 whitespace-nowrap">{dateStr}</td>
+                              <td className="px-4 py-2.5 text-zinc-300">{vendorName}</td>
+                              <td className="px-4 py-2.5 text-zinc-500">{category}</td>
+                              <td className="px-4 py-2.5 text-right text-white">{fmtD(tx.amount_cents)}</td>
+                              <td className="px-4 py-2.5 text-right text-zinc-300">{fmtD(vendorCut)}</td>
+                              <td className="px-4 py-2.5 text-right text-zinc-300">{fmtD(appFee)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t border-white/[0.08] bg-white/[0.02] font-semibold">
+                          <td className="px-4 py-3 text-zinc-400" colSpan={3}>Total (all {txRows.length})</td>
+                          <td className="px-4 py-3 text-right text-white">
+                            {fmtD(txRows.reduce((s, t) => s + t.amount_cents, 0))}
+                          </td>
+                          <td className="px-4 py-3 text-right text-zinc-300">
+                            {fmtD(txRows.reduce((s, t) => s + (t.amount_cents - (t.app_fee_cents ?? 0)), 0))}
+                          </td>
+                          <td className="px-4 py-3 text-right text-zinc-300">
+                            {fmtD(txRows.reduce((s, t) => s + (t.app_fee_cents ?? 0), 0))}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-between pt-1">
+                      <button
+                        onClick={() => setTxPage(p => Math.max(1, p - 1))}
+                        disabled={txPage === 1}
+                        className="rounded-lg border border-white/[0.08] px-4 py-1.5 text-xs font-medium text-zinc-400 hover:text-white hover:border-white/20 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                      >
+                        Previous
+                      </button>
+                      <span className="text-xs text-zinc-500">Page {txPage} of {totalPages}</span>
+                      <button
+                        onClick={() => setTxPage(p => Math.min(totalPages, p + 1))}
+                        disabled={txPage === totalPages}
+                        className="rounded-lg border border-white/[0.08] px-4 py-1.5 text-xs font-medium text-zinc-400 hover:text-white hover:border-white/20 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
 
           {/* SECTION 3 — SETTLE EVENT placeholder */}
