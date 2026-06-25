@@ -1723,6 +1723,7 @@ type TxRow = {
   net_amount_cents: number | null;
   square_created_at: string | null;
   fetched_at: string | null;
+  payment_method: string | null;
 };
 
 const SPLIT_DEF: VendorSplitState = {
@@ -1831,7 +1832,7 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
         // 2. Transaction totals per vendor + full rows for breakdown table
         const { data: txData } = await supabase
           .from("square_transactions")
-          .select("transaction_id, vendor_id, amount_cents, app_fee_cents, net_amount_cents, square_created_at, fetched_at")
+          .select("transaction_id, vendor_id, amount_cents, app_fee_cents, net_amount_cents, square_created_at, fetched_at, payment_method")
           .eq("event_id", eventId)
           .order("square_created_at", { ascending: false });
         const totals: Record<string, number> = {};
@@ -2220,7 +2221,57 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
             })()}
           </div>
 
-          {/* SECTION 3 — SETTLE EVENT placeholder */}
+          {/* SECTION 3 — CASH SETTLEMENT */}
+          {(() => {
+            const cashTxs = txRows.filter(tx => tx.payment_method?.toLowerCase() === "cash" && tx.amount_cents > 0);
+            const cashByVendor: Record<string, { amount_cents: number; app_fee_cents: number }> = {};
+            for (const tx of cashTxs) {
+              if (!cashByVendor[tx.vendor_id]) cashByVendor[tx.vendor_id] = { amount_cents: 0, app_fee_cents: 0 };
+              cashByVendor[tx.vendor_id].amount_cents  += tx.amount_cents;
+              cashByVendor[tx.vendor_id].app_fee_cents += tx.app_fee_cents ?? 0;
+            }
+            const cashVendorIds = Object.keys(cashByVendor);
+            return (
+              <div className="flex flex-col gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Cash Settlement</p>
+                  <p className="text-xs text-zinc-600 mt-0.5">Amounts vendors owe in cash after the event.</p>
+                </div>
+                {cashVendorIds.length === 0 ? (
+                  <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-8 text-center">
+                    <p className="text-sm text-zinc-500">No cash transactions recorded.</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {cashVendorIds.map((vid) => {
+                      const vendor = vendors.find(v => v.vendor_id === vid);
+                      const vendorName = vendor?.business_name ?? vid;
+                      const { amount_cents, app_fee_cents } = cashByVendor[vid];
+                      return (
+                        <div key={vid} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 flex items-center justify-between gap-3">
+                          <div className="flex flex-col gap-0.5 min-w-0">
+                            <p className="text-xs font-semibold text-zinc-300 truncate">{vendorName}</p>
+                            <p className="text-xs text-zinc-500">Total cash sales: {fmtD(amount_cents)}</p>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <div className="text-right">
+                              <p className="text-xs text-zinc-500">Promoter cut owed</p>
+                              <p className="text-sm font-semibold text-white">{fmtD(app_fee_cents)}</p>
+                            </div>
+                            <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold text-amber-400 whitespace-nowrap">
+                              Pending Collection
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* SECTION 4 — SETTLE EVENT placeholder */}
           <div className="relative">
             <div className="absolute inset-0 z-10 flex items-center justify-center">
               <span className="rounded-full border border-zinc-500/40 bg-[#0a0a0a] px-3 py-1 text-xs font-semibold text-zinc-500">Coming Soon</span>
