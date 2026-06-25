@@ -1715,6 +1715,15 @@ type EventVendorWithCategory = {
   square_connected: boolean | null;
 };
 
+type TxRow = {
+  transaction_id: string;
+  vendor_id: string;
+  amount_cents: number;
+  app_fee_cents: number | null;
+  net_amount_cents: number | null;
+  square_created_at: string | null;
+};
+
 const SPLIT_DEF: VendorSplitState = {
   vendor_percentage: "50", promoter_percentage: "50",
   site_fee: "0", settlement_mode: "end_of_day", fee_payer: "vendor",
@@ -1726,6 +1735,7 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
   const [error,              setError]              = useState<string | null>(null);
   const [vendors,            setVendors]            = useState<EventVendorWithCategory[]>([]);
   const [txTotals,           setTxTotals]           = useState<Record<string, number>>({});
+  const [txRows,             setTxRows]             = useState<TxRow[]>([]);
   const [splits,             setSplits]             = useState<Record<string, VendorSplitState>>({});
   const [squareConnected,         setSquareConnected]         = useState<boolean | null>(null);
   const [squareMerchantName,      setSquareMerchantName]      = useState<string | null>(null);
@@ -1815,16 +1825,18 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
           setVendors(vendorList);
         }
 
-        // 2. Transaction totals per vendor
+        // 2. Transaction totals per vendor + full rows for breakdown table
         const { data: txData } = await supabase
           .from("square_transactions")
-          .select("vendor_id, amount_cents")
-          .eq("event_id", eventId);
+          .select("transaction_id, vendor_id, amount_cents, app_fee_cents, net_amount_cents, square_created_at")
+          .eq("event_id", eventId)
+          .order("square_created_at", { ascending: false });
         const totals: Record<string, number> = {};
-        txData?.forEach((tx: { vendor_id: string; amount_cents: number }) => {
+        (txData ?? []).forEach((tx: TxRow) => {
           totals[tx.vendor_id] = (totals[tx.vendor_id] || 0) + tx.amount_cents;
         });
         setTxTotals(totals);
+        setTxRows((txData ?? []) as TxRow[]);
 
         // 3. Category splits
         const { data: splitRows } = await supabase
@@ -2112,73 +2124,67 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
           )}
 
           {/* SECTION 2 — TRANSACTION BREAKDOWN */}
-          {isTerminal ? (
-            <div className="flex flex-col gap-3 opacity-40 pointer-events-none select-none">
-              <div className="flex items-center gap-2">
-                <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Transaction Breakdown</p>
-                <span className="text-xs text-zinc-600">— Available after Terminal is paired</span>
+          <div className="flex flex-col gap-3">
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Transaction Breakdown</p>
+            {txRows.length === 0 ? (
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-8 text-center">
+                <p className="text-sm text-zinc-500">No transactions recorded yet.</p>
               </div>
-              <div className="rounded-xl border border-dashed border-white/[0.06] px-4 py-6 text-center">
-                <p className="text-xs text-zinc-600">Available after Terminal is paired</p>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-white/[0.06] text-zinc-500">
+                      <th className="px-4 py-3 text-left font-medium">Date / Time</th>
+                      <th className="px-4 py-3 text-left font-medium">Vendor</th>
+                      <th className="px-4 py-3 text-left font-medium">Category</th>
+                      <th className="px-4 py-3 text-right font-medium">Total</th>
+                      <th className="px-4 py-3 text-right font-medium">Vendor Cut</th>
+                      <th className="px-4 py-3 text-right font-medium">Promoter Cut</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {txRows.map((tx) => {
+                      const vendor = vendors.find(v => v.vendor_id === tx.vendor_id);
+                      const vendorName = vendor?.business_name ?? tx.vendor_id;
+                      const category = vendor?.category ?? "—";
+                      const appFee = tx.app_fee_cents ?? 0;
+                      const vendorCut = tx.amount_cents - appFee;
+                      const dt = tx.square_created_at ? new Date(tx.square_created_at) : null;
+                      const dateStr = dt
+                        ? dt.toLocaleDateString("en-AU", { day: "2-digit", month: "short" }) + " " +
+                          dt.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" })
+                        : "—";
+                      return (
+                        <tr key={tx.transaction_id} className="border-b border-white/[0.04] hover:bg-white/[0.02]">
+                          <td className="px-4 py-2.5 text-zinc-400 whitespace-nowrap">{dateStr}</td>
+                          <td className="px-4 py-2.5 text-zinc-300">{vendorName}</td>
+                          <td className="px-4 py-2.5 text-zinc-500">{category}</td>
+                          <td className="px-4 py-2.5 text-right text-white">{fmtD(tx.amount_cents)}</td>
+                          <td className="px-4 py-2.5 text-right text-zinc-300">{fmtD(vendorCut)}</td>
+                          <td className="px-4 py-2.5 text-right text-zinc-300">{fmtD(appFee)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-white/[0.08] bg-white/[0.02] font-semibold">
+                      <td className="px-4 py-3 text-zinc-400" colSpan={3}>Total</td>
+                      <td className="px-4 py-3 text-right text-white">
+                        {fmtD(txRows.reduce((s, t) => s + t.amount_cents, 0))}
+                      </td>
+                      <td className="px-4 py-3 text-right text-zinc-300">
+                        {fmtD(txRows.reduce((s, t) => s + (t.amount_cents - (t.app_fee_cents ?? 0)), 0))}
+                      </td>
+                      <td className="px-4 py-3 text-right text-zinc-300">
+                        {fmtD(txRows.reduce((s, t) => s + (t.app_fee_cents ?? 0), 0))}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
               </div>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-3">
-              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Transaction Breakdown</p>
-              {!hasAnyRevenue ? (
-                <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-8 text-center">
-                  <p className="text-sm text-zinc-500">No transaction data yet</p>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-5">
-                  {categories.map((cat) => {
-                    const catVendors = (vendorsByCategory[cat] ?? []).filter(v => (txTotals[v.vendor_id] || 0) > 0);
-                    if (catVendors.length === 0) return null;
-
-                    const catTotalCents = catVendors.reduce((sum, v) => sum + (txTotals[v.vendor_id] || 0), 0);
-                    const splitSet = !!splits[cat];
-                    const vp = splitSet ? (parseFloat(splits[cat].vendor_percentage) || 0) : null;
-                    const pp = splitSet ? (parseFloat(splits[cat].promoter_percentage) || 0) : null;
-
-                    return (
-                      <div key={cat} className="flex flex-col gap-2">
-                        <div className="flex items-center justify-between pb-1 border-b border-white/[0.06]">
-                          <p className="text-sm font-semibold text-white">{cat}</p>
-                          <p className="text-sm font-semibold text-white">{fmtD(catTotalCents)}</p>
-                        </div>
-                        {catVendors.map((v) => {
-                          const totalCents = txTotals[v.vendor_id] || 0;
-                          return (
-                            <div key={v.vendor_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 flex flex-col gap-1.5">
-                              <p className="text-xs font-semibold text-zinc-300">{v.business_name}</p>
-                              <div className="flex justify-between text-xs">
-                                <span className="text-zinc-400">Total Sales</span>
-                                <span className="text-white">{fmtD(totalCents)}</span>
-                              </div>
-                              {vp !== null && pp !== null ? (
-                                <>
-                                  <div className="flex justify-between text-xs">
-                                    <span className="text-zinc-400">Vendor Cut ({vp}%)</span>
-                                    <span className="text-zinc-300">{fmtD(totalCents * (vp / 100))}</span>
-                                  </div>
-                                  <div className="flex justify-between text-xs">
-                                    <span className="text-zinc-400">Promoter Cut ({pp}%)</span>
-                                    <span className="text-zinc-300">{fmtD(totalCents * (pp / 100))}</span>
-                                  </div>
-                                </>
-                              ) : (
-                                <p className="text-xs text-zinc-600 italic">Set split percentages above first</p>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
+            )}
+          </div>
 
           {/* SECTION 3 — SETTLE EVENT placeholder */}
           <div className="relative">
