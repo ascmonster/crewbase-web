@@ -1722,6 +1722,7 @@ type TxRow = {
   app_fee_cents: number | null;
   net_amount_cents: number | null;
   square_created_at: string | null;
+  fetched_at: string | null;
 };
 
 const SPLIT_DEF: VendorSplitState = {
@@ -1828,7 +1829,7 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
         // 2. Transaction totals per vendor + full rows for breakdown table
         const { data: txData } = await supabase
           .from("square_transactions")
-          .select("transaction_id, vendor_id, amount_cents, app_fee_cents, net_amount_cents, square_created_at")
+          .select("transaction_id, vendor_id, amount_cents, app_fee_cents, net_amount_cents, square_created_at, fetched_at")
           .eq("event_id", eventId)
           .order("square_created_at", { ascending: false });
         const totals: Record<string, number> = {};
@@ -2150,7 +2151,7 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
                       const category = vendor?.category ?? "—";
                       const appFee = tx.app_fee_cents ?? 0;
                       const vendorCut = tx.amount_cents - appFee;
-                      const dt = tx.square_created_at ? new Date(tx.square_created_at) : null;
+                      const dt = tx.square_created_at ?? tx.fetched_at ? new Date((tx.square_created_at ?? tx.fetched_at)!) : null;
                       const dateStr = dt
                         ? dt.toLocaleDateString("en-AU", { day: "2-digit", month: "short" }) + " " +
                           dt.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" })
