@@ -72,7 +72,8 @@ export async function GET(request: NextRequest) {
 
   // Append scope manually so spaces are encoded as %20, not + (URLSearchParams uses +)
   const scopes = type === "vendor" ? VENDOR_SCOPES : PROMOTER_SCOPES;
-  const finalUrl = `${oauthUrl.toString()}&scope=${scopes.replace(/ /g, "%20")}`;
+  const promptParam = type === "vendor" ? "&prompt=login" : "";
+  const finalUrl = `${oauthUrl.toString()}&scope=${scopes.replace(/ /g, "%20")}${promptParam}`;
 
   return NextResponse.redirect(finalUrl);
 }
