@@ -1572,8 +1572,15 @@ function RevenueTab({ eventId }: { eventId: string }) {
     setLoading(true);
     setError(null);
     const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) { setError("Not authenticated"); setLoading(false); return; }
+    let { data: { session } } = await supabase.auth.refreshSession();
+    if (!session) {
+      ({ data: { session } } = await supabase.auth.getSession());
+    }
+    if (!session) {
+      setError("Session expired — please refresh the page");
+      setLoading(false);
+      return;
+    }
     try {
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/vendor-event-revenue`,
