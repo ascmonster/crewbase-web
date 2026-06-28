@@ -21,6 +21,8 @@ type EventRow = {
   description: string | null;
   promoter_id: string;
   payment_mode: string | null;
+  settled: boolean | null;
+  settled_at: string | null;
 };
 
 type VendorProfile = {
@@ -1739,7 +1741,7 @@ const SPLIT_DEF: VendorSplitState = {
   square_location_id: null, saving: false, error: null, saved: false, locked: false,
 };
 
-function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: string }) {
+function SplitsTab({ eventId, paymentMode, settled, settledAt }: { eventId: string; paymentMode: string; settled: boolean | null; settledAt: string | null }) {
   const [loading,            setLoading]            = useState(true);
   const [error,              setError]              = useState<string | null>(null);
   const [vendors,            setVendors]            = useState<EventVendorWithCategory[]>([]);
@@ -1752,6 +1754,10 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
   const [squareMerchantName,      setSquareMerchantName]      = useState<string | null>(null);
   const [squareDeviceCodeId,      setSquareDeviceCodeId]      = useState<string | null>(null);
   const [squareDisconnectConfirm, setSquareDisconnectConfirm] = useState(false);
+  const [settling,      setSettling]      = useState(false);
+  const [settleError,   setSettleError]   = useState<string | null>(null);
+  const [settleSuccess, setSettleSuccess] = useState(false);
+  const [settleDocs,    setSettleDocs]    = useState<{ vendor_id: string | null; file_name: string; storage_path: string; document_type: string }[]>([]);
   async function disconnectSquare() {
     const supabase = createClient();
     console.log("Attempting disconnect for event_id:", eventId);
@@ -1874,6 +1880,53 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
     } else {
       patch(cat, { saving: false, error: null, saved: false, locked: true });
     }
+  }
+
+  async function handleSettleEvent() {
+    setSettling(true);
+    setSettleError(null);
+    try {
+      const { data: { session } } = await createClient().auth.getSession();
+      if (!session) throw new Error("Not authenticated");
+
+      const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/settle-event`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ event_id: eventId }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Settlement failed");
+
+      const { data: docs } = await createClient()
+        .from("settlement_documents")
+        .select("vendor_id, file_name, storage_path, document_type")
+        .eq("event_id", eventId)
+        .order("document_type", { ascending: false });
+
+      setSettleDocs(docs || []);
+      setSettleSuccess(true);
+    } catch (err: any) {
+      setSettleError(err.message || "Something went wrong");
+    } finally {
+      setSettling(false);
+    }
+  }
+
+  async function handleDownloadDoc(storagePath: string, fileName: string) {
+    const { data, error } = await createClient()
+      .storage
+      .from("settlement-documents")
+      .createSignedUrl(storagePath, 60 * 60);
+
+    if (error || !data?.signedUrl) {
+      alert("Could not generate download link. Please try again.");
+      return;
+    }
+    window.open(data.signedUrl, "_blank");
   }
 
   if (loading) return <div className="py-16 text-center text-sm text-zinc-500">Loading…</div>;
@@ -2241,22 +2294,138 @@ function SplitsTab({ eventId, paymentMode }: { eventId: string; paymentMode: str
             );
           })()}
 
-          {/* SECTION 4 — SETTLE EVENT placeholder */}
-          <div className="relative">
-            <div className="absolute inset-0 z-10 flex items-center justify-center">
-              <span className="rounded-full border border-zinc-500/40 bg-[#0a0a0a] px-3 py-1 text-xs font-semibold text-zinc-500">Coming Soon</span>
-            </div>
-            <div className="pointer-events-none select-none flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-6 opacity-40">
+          {/* SECTION 4 — SETTLE EVENT */}
+          <div className="flex flex-col gap-3">
+            <div>
               <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Settle Event</p>
-              <button disabled className="self-start rounded-lg border border-white/[0.08] px-4 py-2 text-xs font-medium text-zinc-500">Settle Event</button>
-              <p className="text-xs text-zinc-600">Finalises the event, confirms all splits and generates Crewbase invoice — coming soon</p>
+              <p className="text-xs text-zinc-600 mt-0.5">
+                Locks all splits and generates settlement documents for each vendor plus a master summary.
+              </p>
             </div>
+
+            {settled ? (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400">
+                    ✓ Settled
+                  </span>
+                  {settledAt && (
+                    <p className="text-xs text-zinc-500">
+                      {new Date(settledAt).toLocaleString("en-AU", {
+                        day: "2-digit", month: "short", year: "numeric",
+                        hour: "2-digit", minute: "2-digit",
+                      })}
+                    </p>
+                  )}
+                </div>
+                {settleDocs.length === 0 && (
+                  <LoadSettlementDocs
+                    eventId={eventId}
+                    onLoad={(docs) => setSettleDocs(docs)}
+                  />
+                )}
+                {settleDocs.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    {settleDocs.map((doc) => (
+                      <div
+                        key={doc.storage_path}
+                        className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 flex items-center justify-between gap-3"
+                      >
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <p className="text-xs font-semibold text-zinc-300 truncate">{doc.file_name}</p>
+                          <p className="text-[10px] text-zinc-500 uppercase tracking-wide">
+                            {doc.document_type === "master_summary" ? "Master Summary" : "Vendor Invoice"}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handleDownloadDoc(doc.storage_path, doc.file_name)}
+                          className="shrink-0 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-white/[0.08] transition-colors"
+                        >
+                          Download
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : settleSuccess ? (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400">
+                    ✓ Event Settled
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-400">Settlement documents are ready. Click to download.</p>
+                {settleDocs.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    {settleDocs.map((doc) => (
+                      <div
+                        key={doc.storage_path}
+                        className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 flex items-center justify-between gap-3"
+                      >
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <p className="text-xs font-semibold text-zinc-300 truncate">{doc.file_name}</p>
+                          <p className="text-[10px] text-zinc-500 uppercase tracking-wide">
+                            {doc.document_type === "master_summary" ? "Master Summary" : "Vendor Invoice"}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handleDownloadDoc(doc.storage_path, doc.file_name)}
+                          className="shrink-0 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-white/[0.08] transition-colors"
+                        >
+                          Download
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {settleError && (
+                  <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3">
+                    <p className="text-xs text-red-400">{settleError}</p>
+                  </div>
+                )}
+                <button
+                  onClick={handleSettleEvent}
+                  disabled={settling}
+                  className="self-start rounded-lg border border-purple-500/40 bg-purple-500/10 px-5 py-2.5 text-sm font-semibold text-purple-300 hover:bg-purple-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {settling ? "Settling…" : "Settle Event"}
+                </button>
+                <p className="text-xs text-zinc-600">
+                  This action is permanent. Once settled, splits are locked and cannot be changed.
+                </p>
+              </div>
+            )}
           </div>
         </>
       )}
 
     </div>
   );
+}
+
+// ── Settlement docs loader ──────────────────────────────────────────────────
+
+function LoadSettlementDocs({ eventId, onLoad }: { eventId: string; onLoad: (docs: any[]) => void }) {
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (loaded) return;
+    setLoaded(true);
+    createClient()
+      .from("settlement_documents")
+      .select("vendor_id, file_name, storage_path, document_type")
+      .eq("event_id", eventId)
+      .order("document_type", { ascending: false })
+      .then(({ data }: { data: any[] | null }) => {
+        if (data) onLoad(data);
+      });
+  }, [eventId, loaded, onLoad]);
+
+  return null;
 }
 
 // ── Cancel confirm ─────────────────────────────────────────────────────────
@@ -2332,7 +2501,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
       // 1. Event
       const { data: ev, error: evErr } = await supabase
         .from("events")
-        .select("id, name, location, start_date, end_date, timezone, status, description, promoter_id, payment_mode")
+        .select("id, name, location, start_date, end_date, timezone, status, description, promoter_id, payment_mode, settled, settled_at")
         .eq("id", id)
         .single();
 
@@ -2577,7 +2746,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         />
       )}
       {activeTab === "revenue" && <RevenueTab eventId={event.id} />}
-      {activeTab === "splits"  && <SplitsTab  eventId={event.id} paymentMode={event.payment_mode ?? "square_register"} />}
+      {activeTab === "splits"  && <SplitsTab  eventId={event.id} paymentMode={event.payment_mode ?? "square_register"} settled={event.settled ?? null} settledAt={event.settled_at ?? null} />}
 
       {/* Modals */}
       {showDateEdit && (
