@@ -1926,7 +1926,25 @@ function SplitsTab({ eventId, paymentMode, settled, settledAt }: { eventId: stri
       alert("Could not generate download link. Please try again.");
       return;
     }
-    window.open(data.signedUrl, "_blank");
+
+    // Fetch the HTML content and render it in a new window
+    // so the browser displays it properly (and promoter can Print → Save as PDF)
+    try {
+      const res = await fetch(data.signedUrl);
+      const html = await res.text();
+      const win = window.open("", "_blank");
+      if (!win) {
+        // Fallback if popup blocked
+        window.open(data.signedUrl, "_blank");
+        return;
+      }
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+    } catch {
+      // Fallback to direct URL
+      window.open(data.signedUrl, "_blank");
+    }
   }
 
   if (loading) return <div className="py-16 text-center text-sm text-zinc-500">Loading…</div>;
