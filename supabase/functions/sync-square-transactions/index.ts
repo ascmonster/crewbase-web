@@ -148,14 +148,32 @@ serve(async (req) => {
           location_id:       square_location_id,
           amount_cents:      p.amount_money?.amount ?? 0,
           net_amount_cents:  (p.amount_money?.amount ?? 0) - feeTotal,
-          payment_method:    p.source_type ?? p.payment_method_type ?? null,
+          payment_method:    p.source_type === 'CASH' ? 'cash' : p.source_type === 'CARD' ? 'card' : p.source_type?.toLowerCase() ?? p.payment_method_type?.toLowerCase() ?? null,
           square_created_at: p.created_at,
         }
       })
 
       const { error: upsertErr } = await supabase
         .from('square_transactions')
-        .upsert(txRows, { onConflict: 'transaction_id' })
+        .upsert(txRows, {
+          onConflict: 'transaction_id',
+          ignoreDuplicates: false,
+        })
+
+      // After upsert, restore payment_method = 'cash' for any cash rows
+      // that may have been overwritten, since we set these explicitly
+      // via record-cash-payment and Square may return a different format
+      const cashTransactionIds = txRows
+        .filter(r => r.payment_method === 'cash')
+        .map(r => r.transaction_id)
+        .filter(Boolean)
+
+      if (cashTransactionIds.length > 0) {
+        await supabase
+          .from('square_transactions')
+          .update({ payment_method: 'cash' })
+          .in('transaction_id', cashTransactionIds)
+      }
 
       if (upsertErr) {
         console.error('[sync] upsert error for vendor', vendor_id, ':', upsertErr.message)
