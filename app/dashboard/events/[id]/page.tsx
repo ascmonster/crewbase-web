@@ -492,8 +492,9 @@ function AddDocModal({
       const path = `${eventId}/${Date.now()}.pdf`;
       const { error: uploadErr } = await supabase.storage.from("event-documents").upload(path, file, { contentType: "application/pdf" });
       if (uploadErr) { setErr(uploadErr.message); setSaving(false); return; }
-      const { data: urlData } = supabase.storage.from("event-documents").getPublicUrl(path);
-      fileUrl = urlData.publicUrl;
+      const { data: signedData, error: signedErr } = await supabase.storage.from("event-documents").createSignedUrl(path, 60 * 60 * 24 * 365);
+      if (signedErr || !signedData?.signedUrl) { setErr("Failed to generate document URL."); setSaving(false); return; }
+      fileUrl = signedData.signedUrl;
     }
 
     const { data, error } = await supabase
@@ -1214,6 +1215,27 @@ function DocsTab({
   const [vendorApprovals, setVendorApprovals] = useState<VendorApprovalRow[]>([]);
   const [complianceLoaded, setComplianceLoaded] = useState(false);
   const [approvingStaff, setApprovingStaff] = useState<string | null>(null);
+  const [openingDoc, setOpeningDoc] = useState<string | null>(null);
+
+  // Stored file_url is a signed URL that expires. Extract the storage path
+  // and mint a fresh signed URL at click time so the link never 404s.
+  async function openDoc(doc: DocRow) {
+    if (!doc.file_url) return;
+    setOpeningDoc(doc.id);
+    try {
+      const match = doc.file_url.match(/\/event-documents\/(.+?)(\?|$)/);
+      const path = match ? decodeURIComponent(match[1]) : null;
+      if (!path) { window.open(doc.file_url, "_blank"); return; }
+      const { data, error } = await createClient()
+        .storage
+        .from("event-documents")
+        .createSignedUrl(path, 60 * 60);
+      if (error || !data?.signedUrl) { window.open(doc.file_url, "_blank"); return; }
+      window.open(data.signedUrl, "_blank");
+    } finally {
+      setOpeningDoc(null);
+    }
+  }
 
   useEffect(() => {
     if (docs.length === 0) return;
@@ -1290,7 +1312,13 @@ function DocsTab({
                   {d.type && <p className="text-xs text-zinc-500 mt-0.5 capitalize">{d.type}</p>}
                 </div>
                 {d.file_url && (
-                  <a href={d.file_url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-xs text-indigo-400 hover:underline">View</a>
+                  <button
+                    onClick={() => openDoc(d)}
+                    disabled={openingDoc === d.id}
+                    className="shrink-0 text-xs text-indigo-400 hover:underline disabled:opacity-50"
+                  >
+                    {openingDoc === d.id ? "Opening…" : "View"}
+                  </button>
                 )}
               </div>
             ))}
