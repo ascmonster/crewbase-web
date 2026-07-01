@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useRequireVendorAuth } from "@/lib/useRequireVendorAuth";
 import { createClient } from "@/lib/supabase";
 
@@ -378,24 +377,18 @@ function PairTerminalModal({ truck, onClose, onPaired }: {
 
 // ── Truck card ─────────────────────────────────────────────────────────────
 
-function TruckCard({ truck, squareConnected, onEdit, onPair, onDisconnect, onOpenPos }: {
+function TruckCard({ truck, squareConnected, onEdit, onPair, onDisconnect }: {
   truck: Truck;
   squareConnected: boolean;
   onEdit: () => void;
   onPair: () => void;
   onDisconnect: () => void;
-  onOpenPos: () => void;
 }) {
   const locationLinked = !!truck.square_location_id;
   const showTerminal = squareConnected && locationLinked;
-  const canOpenPos = squareConnected && locationLinked;
-  const stop = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
 
   return (
-    <div
-      onClick={canOpenPos ? onOpenPos : undefined}
-      className={`rounded-2xl bg-white/[0.02] border border-white/[0.06] border-l-4 border-l-[#FF6B35] px-4 py-4 ${canOpenPos ? "cursor-pointer hover:bg-white/[0.04] transition-colors" : ""}`}
-    >
+    <div className="rounded-2xl bg-white/[0.02] border border-white/[0.06] border-l-4 border-l-[#FF6B35] px-4 py-4">
       <div className="flex items-start gap-3">
         {truck.photo_url ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -417,24 +410,18 @@ function TruckCard({ truck, squareConnected, onEdit, onPair, onDisconnect, onOpe
               truck.square_terminal_device_id ? (
                 <span className="flex items-center gap-2">
                   <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">✓ {truck.square_terminal_name ?? "Terminal"}</span>
-                  <button onClick={stop(onDisconnect)} className="text-[10px] text-zinc-500 hover:text-rose-400 transition-colors">Disconnect</button>
+                  <button onClick={onDisconnect} className="text-[10px] text-zinc-500 hover:text-rose-400 transition-colors">Disconnect</button>
                 </span>
               ) : (
-                <button onClick={stop(onPair)} className="rounded-full bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 text-[10px] font-semibold text-amber-400 hover:bg-amber-500/20 transition-colors">
+                <button onClick={onPair} className="rounded-full bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 text-[10px] font-semibold text-amber-400 hover:bg-amber-500/20 transition-colors">
                   Pair Terminal
                 </button>
               )
             )}
-
-            {canOpenPos && (
-              <button onClick={stop(onOpenPos)} className="rounded-full bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 text-[10px] font-semibold text-amber-400 hover:bg-amber-500/20 transition-colors">
-                Open POS
-              </button>
-            )}
           </div>
         </div>
 
-        <button onClick={stop(onEdit)} className="text-zinc-500 hover:text-white transition-colors shrink-0" aria-label="Edit truck">
+        <button onClick={onEdit} className="text-zinc-500 hover:text-white transition-colors shrink-0" aria-label="Edit truck">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         </button>
       </div>
@@ -446,7 +433,6 @@ function TruckCard({ truck, squareConnected, onEdit, onPair, onDisconnect, onOpe
 
 export default function VendorTrucksPage() {
   const { user, loading: authLoading } = useRequireVendorAuth();
-  const router = useRouter();
   const [trucks, setTrucks] = useState<Truck[]>([]);
   const [square, setSquare] = useState<VendorSquare | null>(null);
   const [loading, setLoading] = useState(true);
@@ -511,7 +497,6 @@ export default function VendorTrucksPage() {
               onEdit={() => setModal({ existing: t })}
               onPair={() => setPairing(t)}
               onDisconnect={() => disconnectTerminal(t)}
-              onOpenPos={() => router.push(`/vendor/dashboard/trucks/${t.id}/pos`)}
             />
           ))}
         </div>

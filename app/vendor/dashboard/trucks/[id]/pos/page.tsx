@@ -50,8 +50,12 @@ function CenterState({ icon, title, sub, action }: { icon: React.ReactNode; titl
 
 // ── Page ──────────────────────────────────────────────────────────────────
 
-export default function TruckPosPage({ params }: { params: Promise<{ id: string }> }) {
+export default function TruckPosPage({ params, searchParams }: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ event_id?: string }>;
+}) {
   const { id } = use(params);
+  const { event_id: eventId } = use(searchParams);
   const { user, loading: authLoading } = useRequireVendorAuth();
 
   const [truck, setTruck] = useState<Truck | null>(null);
@@ -92,13 +96,14 @@ export default function TruckPosPage({ params }: { params: Promise<{ id: string 
         .eq("vendor_id", user!.id)
         .order("square_created_at", { ascending: false });
       if (truck!.square_location_id) query = query.eq("location_id", truck!.square_location_id);
+      if (eventId) query = query.eq("event_id", eventId);
       const { data } = await query;
       setTxRows((data as TxRow[]) ?? []);
       setTxLoaded(true);
       setTxLoading(false);
     }
     load();
-  }, [tab, txLoaded, user?.id, truck]);
+  }, [tab, txLoaded, user?.id, truck, eventId]);
 
   if (authLoading || loading) {
     return (
@@ -163,7 +168,9 @@ export default function TruckPosPage({ params }: { params: Promise<{ id: string 
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         Back to fleet
       </Link>
-      <h1 className="text-xl font-bold text-white mb-6">POS — {truck.name}</h1>
+      <h1 className="text-xl font-bold text-white">POS — {truck.name}</h1>
+      {eventId && <p className="text-xs text-zinc-500 mt-1 mb-5">Event: {eventId.slice(0, 8)}…</p>}
+      {!eventId && <div className="mb-6" />}
 
       {/* Tabs */}
       <div className="flex gap-0 mb-6 border-b border-white/[0.06]">

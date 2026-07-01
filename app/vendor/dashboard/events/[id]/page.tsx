@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useRequireVendorAuth } from "@/lib/useRequireVendorAuth";
 import { createClient } from "@/lib/supabase";
 import { deriveDisplayStatus } from "@/lib/eventStatus";
@@ -26,7 +27,7 @@ type BroadcastRow = {
   created_at: string;
 };
 
-type TruckRow = { id: string; name: string };
+type TruckRow = { id: string; name: string; square_location_id: string | null };
 
 type TxRow = {
   transaction_id: string;
@@ -151,6 +152,7 @@ function BroadcastCard({ b }: { b: BroadcastRow }) {
 export default function VendorEventDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { user, loading: authLoading } = useRequireVendorAuth();
+  const router = useRouter();
 
   const [activeTab, setActiveTab] = useState<Tab>("overview");
 
@@ -199,7 +201,7 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
           .maybeSingle(),
         supabase
           .from("vendor_trucks")
-          .select("id, name")
+          .select("id, name, square_location_id")
           .eq("vendor_id", uid),
         supabase
           .from("event_trucks")
@@ -405,16 +407,29 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
                 {allTrucks.map((t) => {
                   const on = selectedTruckIds.has(t.id);
                   return (
-                    <button
-                      key={t.id}
-                      onClick={() => toggleTruck(t.id, on)}
-                      className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                        on ? "bg-[#FF6B35] text-white" : "border border-white/[0.12] text-zinc-400 hover:text-white"
-                      }`}
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
-                      {t.name}
-                    </button>
+                    <div key={t.id} className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => toggleTruck(t.id, on)}
+                        className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                          on ? "bg-[#FF6B35] text-white" : "border border-white/[0.12] text-zinc-400 hover:text-white"
+                        }`}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+                        {t.name}
+                      </button>
+                      {on && (
+                        t.square_location_id ? (
+                          <button
+                            onClick={() => router.push(`/vendor/dashboard/trucks/${t.id}/pos?event_id=${id}`)}
+                            className="rounded-full bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 text-[10px] font-semibold text-amber-400 hover:bg-amber-500/20 transition-colors"
+                          >
+                            Open POS
+                          </button>
+                        ) : (
+                          <span className="rounded-full bg-zinc-500/10 px-2.5 py-1 text-[10px] font-semibold text-zinc-400">No Square</span>
+                        )
+                      )}
+                    </div>
                   );
                 })}
               </div>
