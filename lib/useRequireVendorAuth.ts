@@ -15,7 +15,7 @@ export function useRequireVendorAuth() {
   useEffect(() => {
     // 5-second fallback — if auth never resolves, redirect rather than hang forever
     const timeout = setTimeout(() => {
-      router.replace("/vendor/login");
+      router.replace("/login");
     }, 5000);
 
     async function check() {
@@ -26,7 +26,7 @@ export function useRequireVendorAuth() {
         } = await supabase.auth.getSession();
 
         if (!session?.user) {
-          router.replace("/vendor/login");
+          router.replace("/login");
           return;
         }
 
@@ -39,7 +39,7 @@ export function useRequireVendorAuth() {
           .single();
 
         if (profile?.role !== "vendor") {
-          router.replace("/vendor/login");
+          router.replace("/login");
           return;
         }
 

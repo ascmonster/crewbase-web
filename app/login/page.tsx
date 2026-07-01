@@ -14,11 +14,13 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [stage, setStage] = useState<Stage>("form");
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   async function handleSignOut() {
     await createClient().auth.signOut();
     setStage("form");
     setError(null);
+    setStatusMessage(null);
   }
 
   async function handleSignIn(e: React.FormEvent) {
@@ -62,34 +64,61 @@ export default function LoginPage() {
       return;
     }
 
-    if (profile.role !== "promoter" && profile.role !== "admin") {
-      await supabase.auth.signOut();
-      setError("This portal is for promoters only.");
-      setLoading(false);
+    if (profile.role === "promoter" || profile.role === "admin") {
+      const { data: promoterProfile } = await supabase
+        .from("promoter_profiles")
+        .select("approval_status")
+        .eq("user_id", user.id)
+        .single();
+
+      const approvalStatus = promoterProfile?.approval_status;
+
+      if (approvalStatus === "pending") {
+        setStage("pending");
+        setLoading(false);
+        return;
+      }
+
+      if (approvalStatus === "rejected") {
+        setStage("rejected");
+        setLoading(false);
+        return;
+      }
+
+      router.push("/dashboard");
       return;
     }
 
-    const { data: promoterProfile } = await supabase
-      .from("promoter_profiles")
-      .select("approval_status")
-      .eq("user_id", user.id)
-      .single();
+    if (profile.role === "vendor") {
+      const { data: vendorProfile } = await supabase
+        .from("vendor_profiles")
+        .select("approval_status")
+        .eq("user_id", user.id)
+        .single();
 
-    const approvalStatus = promoterProfile?.approval_status;
+      const approvalStatus = vendorProfile?.approval_status;
 
-    if (approvalStatus === "pending") {
-      setStage("pending");
-      setLoading(false);
+      if (approvalStatus === "pending") {
+        setStatusMessage("Your account is pending approval");
+        setStage("pending");
+        setLoading(false);
+        return;
+      }
+
+      if (approvalStatus === "rejected") {
+        setStatusMessage("Your account has been rejected");
+        setStage("rejected");
+        setLoading(false);
+        return;
+      }
+
+      router.push("/vendor/dashboard");
       return;
     }
 
-    if (approvalStatus === "rejected") {
-      setStage("rejected");
-      setLoading(false);
-      return;
-    }
-
-    router.push("/dashboard");
+    await supabase.auth.signOut();
+    setError("Access denied. This portal is for promoters and vendors only.");
+    setLoading(false);
   }
 
   if (stage === "pending") {
@@ -103,7 +132,7 @@ export default function LoginPage() {
             <span className="text-3xl font-bold tracking-tight text-white">
               Crew<span className="text-indigo-400">base</span>
             </span>
-            <p className="mt-2 text-sm text-zinc-500">Promoter portal</p>
+            <p className="mt-2 text-sm text-zinc-500">Sign in to your account</p>
           </div>
           <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] px-8 py-10 shadow-xl shadow-black/40 text-center">
             <div className="mb-4 flex items-center justify-center">
@@ -113,7 +142,7 @@ export default function LoginPage() {
             </div>
             <h2 className="text-lg font-semibold text-white mb-3">Account Under Review</h2>
             <p className="text-sm text-zinc-400 mb-6">
-              Your account is under review. We&apos;ll notify you by email once approved — usually within 24 hours.
+              {statusMessage ?? "Your account is under review. We’ll notify you by email once approved — usually within 24 hours."}
             </p>
             <button
               onClick={handleSignOut}
@@ -138,7 +167,7 @@ export default function LoginPage() {
             <span className="text-3xl font-bold tracking-tight text-white">
               Crew<span className="text-indigo-400">base</span>
             </span>
-            <p className="mt-2 text-sm text-zinc-500">Promoter portal</p>
+            <p className="mt-2 text-sm text-zinc-500">Sign in to your account</p>
           </div>
           <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] px-8 py-10 shadow-xl shadow-black/40 text-center">
             <div className="mb-4 flex items-center justify-center">
@@ -148,7 +177,11 @@ export default function LoginPage() {
             </div>
             <h2 className="text-lg font-semibold text-white mb-3">Application Not Approved</h2>
             <p className="text-sm text-zinc-400 mb-6">
-              Contact{" "}
+              {statusMessage ? (
+                <>{statusMessage}. Contact </>
+              ) : (
+                <>Contact </>
+              )}
               <a href="mailto:hello@trycrewbase.com" className="text-indigo-400 hover:underline">
                 hello@trycrewbase.com
               </a>

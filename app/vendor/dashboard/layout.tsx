@@ -109,7 +109,7 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
 
   async function signOut() {
     await createClient().auth.signOut();
-    router.replace("/vendor/login");
+    router.replace("/login");
   }
 
   function isActive(href: string, exact: boolean) {
