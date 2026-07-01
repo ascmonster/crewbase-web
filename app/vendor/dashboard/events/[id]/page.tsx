@@ -41,8 +41,7 @@ type StaffRow = {
   staff_id: string;
   full_name: string;
   email: string | null;
-  role: string | null;
-  shift_status: string | null;
+  added: boolean;
 };
 
 type Tab = "overview" | "revenue" | "staff" | "broadcasts";
@@ -158,7 +157,8 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
   // Core data (loaded on mount)
   const [event, setEvent] = useState<EventRow | null>(null);
   const [approval, setApproval] = useState<string | null>(null);
-  const [trucks, setTrucks] = useState<TruckRow[]>([]);
+  const [allTrucks, setAllTrucks] = useState<TruckRow[]>([]);
+  const [selectedTruckIds, setSelectedTruckIds] = useState<Set<string>>(new Set());
   const [broadcasts, setBroadcasts] = useState<BroadcastRow[]>([]);
   const [coreLoading, setCoreLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -190,7 +190,7 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
       if (evErr || !ev) { setError("Event not found."); setCoreLoading(false); return; }
       setEvent(ev as EventRow);
 
-      const [approvalRes, vendorTrucksRes, extraTrucksRes, bcastRes] = await Promise.all([
+      const [approvalRes, vendorTrucksRes, eventTrucksRes, bcastRes] = await Promise.all([
         supabase
           .from("event_vendor_approval")
           .select("status")
@@ -202,10 +202,9 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
           .select("id, name")
           .eq("vendor_id", uid),
         supabase
-          .from("event_vendor_extra_trucks")
-          .select("truck_name")
-          .eq("event_id", id)
-          .eq("vendor_id", uid),
+          .from("event_trucks")
+          .select("truck_id")
+          .eq("event_id", id),
         supabase
           .from("event_broadcasts")
           .select("id, message, recipient_type, created_at")
@@ -217,22 +216,9 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
       setApproval((approvalRes.data as { status: string } | null)?.status ?? null);
       setBroadcasts((bcastRes.data as BroadcastRow[]) ?? []);
 
-      // Trucks: this vendor's registered trucks linked to this event, plus per-event extra trucks
-      const vendorTrucks = (vendorTrucksRes.data ?? []) as TruckRow[];
-      const truckList: TruckRow[] = [];
-      if (vendorTrucks.length > 0) {
-        const { data: etRows } = await supabase
-          .from("event_trucks")
-          .select("truck_id")
-          .eq("event_id", id)
-          .in("truck_id", vendorTrucks.map((t) => t.id));
-        const linkedIds = new Set(((etRows ?? []) as { truck_id: string }[]).map((r) => r.truck_id));
-        for (const t of vendorTrucks) if (linkedIds.has(t.id)) truckList.push(t);
-      }
-      for (const [i, r] of ((extraTrucksRes.data ?? []) as { truck_name: string }[]).entries()) {
-        truckList.push({ id: `extra-${i}`, name: r.truck_name });
-      }
-      setTrucks(truckList);
+      // All of this vendor's trucks + which are currently linked to this event
+      setAllTrucks((vendorTrucksRes.data ?? []) as TruckRow[]);
+      setSelectedTruckIds(new Set(((eventTrucksRes.data ?? []) as { truck_id: string }[]).map((r) => r.truck_id)));
 
       setCoreLoading(false);
     }
@@ -273,32 +259,22 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
 
       if (staffIds.length === 0) { setStaff([]); setStaffLoaded(true); setStaffLoading(false); return; }
 
-      const [usersRes, schedRes] = await Promise.all([
+      const [usersRes, eventStaffRes] = await Promise.all([
         supabase.from("users").select("id, full_name, email").in("id", staffIds),
-        supabase
-          .from("schedules")
-          .select("staff_id, role, status, shift_date")
-          .eq("vendor_id", uid)
-          .in("staff_id", staffIds)
-          .order("shift_date", { ascending: false }),
+        supabase.from("event_staff").select("staff_id").eq("event_id", id).eq("vendor_id", uid),
       ]);
 
       const userMap = Object.fromEntries(
         ((usersRes.data ?? []) as { id: string; full_name: string; email: string | null }[]).map((u) => [u.id, u])
       );
-      // Latest schedule per staff → role + shift status
-      const schedMap: Record<string, { role: string | null; status: string | null }> = {};
-      for (const s of (schedRes.data ?? []) as { staff_id: string; role: string | null; status: string | null }[]) {
-        if (!schedMap[s.staff_id]) schedMap[s.staff_id] = { role: s.role, status: s.status };
-      }
+      const addedSet = new Set(((eventStaffRes.data ?? []) as { staff_id: string }[]).map((r) => r.staff_id));
 
       setStaff(
         staffIds.map((sid) => ({
           staff_id: sid,
           full_name: userMap[sid]?.full_name ?? "Unknown",
           email: userMap[sid]?.email ?? null,
-          role: schedMap[sid]?.role ?? null,
-          shift_status: schedMap[sid]?.status ?? null,
+          added: addedSet.has(sid),
         }))
       );
       setStaffLoaded(true);
@@ -306,6 +282,28 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
     }
     load();
   }, [activeTab, staffLoaded, user?.id]);
+
+  // ── Truck select/deselect ──
+  async function toggleTruck(truckId: string, currentlySelected: boolean) {
+    const supabase = createClient();
+    if (currentlySelected) {
+      await supabase.from("event_trucks").delete().eq("event_id", id).eq("truck_id", truckId);
+      setSelectedTruckIds((prev) => { const n = new Set(prev); n.delete(truckId); return n; });
+    } else {
+      await supabase.from("event_trucks").insert({ event_id: id, truck_id: truckId, vendor_id: user!.id });
+      setSelectedTruckIds((prev) => new Set(prev).add(truckId));
+    }
+  }
+
+  // ── Staff add/remove for this event ──
+  async function addStaffToEvent(staffId: string) {
+    await createClient().from("event_staff").insert({ event_id: id, staff_id: staffId, vendor_id: user!.id, status: "confirmed" });
+    setStaff((prev) => prev.map((s) => (s.staff_id === staffId ? { ...s, added: true } : s)));
+  }
+  async function removeStaffFromEvent(staffId: string) {
+    await createClient().from("event_staff").delete().eq("event_id", id).eq("staff_id", staffId).eq("vendor_id", user!.id);
+    setStaff((prev) => prev.map((s) => (s.staff_id === staffId ? { ...s, added: false } : s)));
+  }
 
   // ── Render guards ──
   if (authLoading || coreLoading) {
@@ -336,8 +334,8 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
 
   const TABS: { key: Tab; label: string }[] = [
     { key: "overview",   label: "Overview" },
-    { key: "revenue",    label: "Revenue" },
     { key: "staff",      label: "Staff" },
+    { key: "revenue",    label: "Revenue" },
     { key: "broadcasts", label: "Broadcasts" },
   ];
 
@@ -397,19 +395,28 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
             })()}
           </div>
 
-          {/* Trucks */}
+          {/* Trucks — tap to add / remove from this event */}
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-2">Your Trucks at This Event</p>
-            {trucks.length === 0 ? (
-              <p className="text-sm text-zinc-600">No trucks assigned to this event.</p>
+            {allTrucks.length === 0 ? (
+              <p className="text-sm text-zinc-600">You haven&apos;t added any trucks yet.</p>
             ) : (
               <div className="flex flex-wrap gap-2">
-                {trucks.map((t) => (
-                  <span key={t.id} className="flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.02] px-3 py-1.5 text-xs font-medium text-zinc-300">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FF6B35" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
-                    {t.name}
-                  </span>
-                ))}
+                {allTrucks.map((t) => {
+                  const on = selectedTruckIds.has(t.id);
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => toggleTruck(t.id, on)}
+                      className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                        on ? "bg-[#FF6B35] text-white" : "border border-white/[0.12] text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+                      {t.name}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -498,12 +505,19 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
                 <Avatar name={s.full_name} />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-white truncate">{s.full_name}</p>
-                  <p className="text-xs text-zinc-500 truncate">{s.role ?? s.email ?? "—"}</p>
+                  <p className="text-xs text-zinc-500 truncate">{s.email ?? "—"}</p>
                 </div>
-                {s.shift_status && (
-                  <span className="shrink-0 rounded-full border border-white/[0.08] bg-white/[0.02] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
-                    {s.shift_status}
-                  </span>
+                {s.added ? (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-400 ring-1 ring-emerald-500/20">Added</span>
+                    <button onClick={() => removeStaffFromEvent(s.staff_id)} className="rounded-lg border border-white/[0.12] px-3 py-1.5 text-xs font-medium text-zinc-400 hover:text-white transition-colors">
+                      Remove
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => addStaffToEvent(s.staff_id)} className="shrink-0 rounded-lg bg-[#FF6B35] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#ff7d4d] transition-colors">
+                    Add to Event
+                  </button>
                 )}
               </div>
             ))}

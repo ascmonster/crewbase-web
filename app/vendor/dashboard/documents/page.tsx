@@ -15,9 +15,16 @@ type DocRow = {
   file_name: string;
   document_type: string | null;
   storage_path: string | null;
+  file_url: string | null;
   created_at: string;
   viewed: boolean | null;
 };
+
+// Prettify a doc_type slug, e.g. "public_liability" → "Public Liability".
+function prettyDocType(t: string | null) {
+  if (!t) return null;
+  return t.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 type EventRequestRow = {
   id: string;
@@ -63,6 +70,7 @@ function normDoc(raw: any): DocRow {
     file_name: raw.file_name ?? raw.name ?? raw.title ?? "Document",
     document_type: raw.document_type ?? raw.doc_type ?? raw.type ?? null,
     storage_path: raw.storage_path ?? raw.file_path ?? raw.path ?? null,
+    file_url: raw.file_url ?? null,
     created_at: raw.created_at ?? raw.uploaded_at ?? "",
     viewed: raw.viewed_by_promoter ?? (raw.viewed_at ? true : null) ?? null,
   };
@@ -193,8 +201,11 @@ function DocRowItem({ doc, bucket, onDelete, showViewed }: {
 }) {
   const [confirming, setConfirming] = useState(false);
   const [opening, setOpening] = useState(false);
+  const canView = !!doc.file_url || !!doc.storage_path;
 
   async function view() {
+    // Business docs carry a full public file_url — open it directly.
+    if (doc.file_url) { window.open(doc.file_url, "_blank"); return; }
     if (!doc.storage_path) return;
     setOpening(true);
     try {
@@ -212,7 +223,7 @@ function DocRowItem({ doc, bucket, onDelete, showViewed }: {
         <p className="text-sm font-semibold text-white truncate">{doc.file_name}</p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
           {doc.document_type && (
-            <span className="rounded-full bg-[#FF6B35]/10 px-2 py-0.5 text-[10px] font-semibold text-[#FF6B35]">{doc.document_type}</span>
+            <span className="rounded-full bg-[#FF6B35]/10 px-2 py-0.5 text-[10px] font-semibold text-[#FF6B35]">{prettyDocType(doc.document_type)}</span>
           )}
           <span className="text-xs text-zinc-600">{fmtDate(doc.created_at)}</span>
           {showViewed && doc.viewed != null && (
@@ -223,7 +234,7 @@ function DocRowItem({ doc, bucket, onDelete, showViewed }: {
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        {doc.storage_path && (
+        {canView && (
           <button onClick={view} disabled={opening} className="rounded-lg border border-[#FF6B35]/40 bg-[#FF6B35]/10 px-3 py-1.5 text-xs font-semibold text-[#FF6B35] hover:bg-[#FF6B35]/20 transition-colors disabled:opacity-50">
             {opening ? "Opening…" : "View"}
           </button>
@@ -293,22 +304,22 @@ export default function VendorDocumentsPage() {
     load();
   }, [activeTab, myLoaded, user?.id]);
 
-  // Business Docs lazy load
+  // Business Docs lazy load — vendor_business_documents.vendor_id = vendor_profiles.id (PK)
   useEffect(() => {
-    if (activeTab !== "business" || bizLoaded || !user) return;
+    if (activeTab !== "business" || bizLoaded || !user || vendorProfileId === null) return;
     async function load() {
       setBizLoading(true);
       const { data } = await createClient()
         .from("vendor_business_documents")
         .select("*")
-        .eq("vendor_id", user!.id)
-        .order("created_at", { ascending: false });
+        .eq("vendor_id", vendorProfileId)
+        .order("uploaded_at", { ascending: false });
       setBizDocs(((data ?? []) as unknown[]).map(normDoc));
       setBizLoaded(true);
       setBizLoading(false);
     }
     load();
-  }, [activeTab, bizLoaded, user?.id]);
+  }, [activeTab, bizLoaded, user?.id, vendorProfileId]);
 
   // Event Requests lazy load
   useEffect(() => {
@@ -424,7 +435,7 @@ export default function VendorDocumentsPage() {
 
       {/* ── Business Docs ── */}
       {activeTab === "business" && (
-        authLoading || bizLoading ? (
+        authLoading || bizLoading || (vendorProfileId === null && !bizLoaded) ? (
           <SkeletonRows count={4} />
         ) : bizDocs.length === 0 ? (
           <EmptyState

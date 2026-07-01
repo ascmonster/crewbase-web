@@ -245,7 +245,7 @@ export default function VendorTrucksPage() {
 
       const p = profileRes.data as { square_connected: boolean | null; square_merchant_name: string | null; square_location_name: string | null } | null;
       setSquare({
-        connected: !!p?.square_connected,
+        connected: p?.square_connected === true,
         merchant_name: p?.square_merchant_name ?? null,
         location_name: p?.square_location_name ?? null,
       });

@@ -214,7 +214,7 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
     const rows = (svaRows ?? []) as any[];
     const staffIds = [...new Set(rows.map((r) => r.staff_id).filter(Boolean))];
 
-    const [uRes, spRes, ratingRes, pinRes, shiftRes, payRes, reqRes] = await Promise.all([
+    const [uRes, spRes, ratingRes, pinRes, shiftRes, payRes, reqRes, mgrRes] = await Promise.all([
       staffIds.length ? supabase.from("users").select("id, full_name").in("id", staffIds) : Promise.resolve({ data: [] as any[] }),
       staffIds.length ? supabase.from("staff_profiles").select("user_id, username").in("user_id", staffIds) : Promise.resolve({ data: [] as any[] }),
       staffIds.length ? supabase.from("user_ratings_summary").select("user_id, average_stars").in("user_id", staffIds) : Promise.resolve({ data: [] as any[] }),
@@ -222,7 +222,10 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
       supabase.from("shifts").select("staff_id").eq("vendor_id", vendorId).eq("status", "completed"),
       supabase.from("staff_pay_rates").select("staff_id, rate_type, hourly_rate").eq("employer_id", vendorId),
       supabase.from("vendor_team_requests").select("*").eq("vendor_id", vendorId).eq("status", "pending"),
+      supabase.from("manager_assignments").select("staff_id").eq("vendor_id", vendorId),
     ]);
+
+    const managerSet = new Set(((mgrRes.data ?? []) as any[]).map((r) => r.staff_id));
 
     const nameMap = Object.fromEntries(((uRes.data ?? []) as any[]).map((u) => [u.id, u.full_name]));
     const userMap = Object.fromEntries(((spRes.data ?? []) as any[]).map((p) => [p.user_id, p.username]));
@@ -237,7 +240,7 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
       staff_id: r.staff_id,
       full_name: nameMap[r.staff_id] ?? "Unknown",
       username: userMap[r.staff_id] ?? null,
-      is_manager: !!r.is_manager,
+      is_manager: managerSet.has(r.staff_id),
       rating: ratingMap[r.staff_id] ?? null,
       shift_count: shiftCount[r.staff_id] ?? 0,
       pin: pinMap[r.staff_id] ?? null,
@@ -279,8 +282,15 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
   }
 
   async function toggleManager(m: Member) {
-    await createClient().from("staff_vendor_assignments").update({ is_manager: !m.is_manager }).eq("vendor_id", vendorId).eq("staff_id", m.staff_id);
-    setMembers((prev) => prev.map((x) => (x.staff_id === m.staff_id ? { ...x, is_manager: !x.is_manager } : x)));
+    const supabase = createClient();
+    const next = !m.is_manager;
+    if (next) {
+      await supabase.from("manager_assignments").insert({ vendor_id: vendorId, staff_id: m.staff_id, assigned_by: vendorId });
+    } else {
+      await supabase.from("manager_assignments").delete().eq("vendor_id", vendorId).eq("staff_id", m.staff_id);
+    }
+    await supabase.from("staff_profiles").update({ is_manager: next }).eq("user_id", m.staff_id);
+    setMembers((prev) => prev.map((x) => (x.staff_id === m.staff_id ? { ...x, is_manager: next } : x)));
   }
 
   async function removeMember(staffId: string) {
