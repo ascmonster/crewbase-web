@@ -1,0 +1,417 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRequireVendorAuth } from "@/lib/useRequireVendorAuth";
+import { createClient } from "@/lib/supabase";
+
+// ── Types ──────────────────────────────────────────────────────────────────
+// vendor_subscriptions and the `create-portal-session` edge function are still
+// unverified/not-yet-created (see flags). Everything else uses confirmed columns.
+
+type ProfileForm = {
+  business_name: string;
+  abn: string;
+  suburb: string;
+  state: string;
+  phone: string;
+  description: string;
+};
+
+type PayRatesForm = {
+  base_rate: string;
+  evening_rate: string;
+  saturday_rate: string;
+  sunday_rate: string;
+  public_holiday_rate: string;
+};
+
+type Subscription = {
+  status: string;
+  current_period_end: string | null;
+  stripe_subscription_id: string | null;
+} | null;
+
+type Tab = "profile" | "subscription" | "payrates";
+
+const APPROVAL_CFG: Record<string, { label: string; cls: string }> = {
+  approved: { label: "Approved", cls: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" },
+  pending:  { label: "Pending",  cls: "border-amber-500/30 bg-amber-500/10 text-amber-400" },
+  rejected: { label: "Rejected", cls: "border-rose-500/30 bg-rose-500/10 text-rose-400" },
+};
+
+const SUB_STATUS_CFG: Record<string, string> = {
+  active:    "bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/20",
+  cancelled: "bg-zinc-500/10 text-zinc-400 ring-1 ring-zinc-500/20",
+  past_due:  "bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/20",
+};
+
+function subStatusCls(s: string) {
+  return SUB_STATUS_CFG[s.toLowerCase()] ?? "bg-zinc-500/10 text-zinc-400 ring-1 ring-zinc-500/20";
+}
+
+function fmtDate(s: string | null) {
+  if (!s) return "—";
+  return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/);
+  return parts.length >= 2
+    ? (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase()
+    : (name.charAt(0) || "V").toUpperCase();
+}
+
+// ── Atoms ──────────────────────────────────────────────────────────────────
+
+function SkeletonBlock() {
+  return (
+    <div className="flex flex-col gap-4">
+      {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-12 rounded-lg bg-white/[0.03] animate-pulse" />)}
+    </div>
+  );
+}
+
+function Field({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">{label}</label>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-[#FF6B35] transition-colors"
+      />
+    </div>
+  );
+}
+
+function RateField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">{label} ($/hr)</label>
+      <input
+        type="number" min="0" step="0.01"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="0.00"
+        className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-[#FF6B35] transition-colors [appearance:textfield]"
+      />
+    </div>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────
+
+export default function VendorSettingsPage() {
+  const { user, loading: authLoading } = useRequireVendorAuth();
+  const [activeTab, setActiveTab] = useState<Tab>("profile");
+
+  // Profile
+  const [form, setForm] = useState<ProfileForm>({ business_name: "", abn: "", suburb: "", state: "", phone: "", description: "" });
+  const [approvalStatus, setApprovalStatus] = useState<string | null>(null);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [toast, setToast] = useState(false);
+
+  // Subscription
+  const [subscription, setSubscription] = useState<Subscription>(null);
+  const [subLoaded, setSubLoaded] = useState(false);
+  const [subLoading, setSubLoading] = useState(false);
+  const [portalBusy, setPortalBusy] = useState(false);
+
+  // Pay rates (single row)
+  const [rates, setRates] = useState<PayRatesForm>({ base_rate: "", evening_rate: "", saturday_rate: "", sunday_rate: "", public_holiday_rate: "" });
+  const [ratesLoaded, setRatesLoaded] = useState(false);
+  const [ratesLoading, setRatesLoading] = useState(false);
+  const [savingRates, setSavingRates] = useState(false);
+
+  function showToast() {
+    setToast(true);
+    setTimeout(() => setToast(false), 2500);
+  }
+
+  // ── Profile load ──
+  useEffect(() => {
+    if (!user) return;
+    async function load() {
+      setProfileLoading(true);
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const { data } = await createClient()
+        .from("vendor_profiles")
+        .select("business_name, abn, suburb, state, phone, description, approval_status, logo_url")
+        .eq("user_id", user!.id)
+        .maybeSingle();
+      const p = (data ?? {}) as any;
+      setForm({
+        business_name: p.business_name ?? "",
+        abn: p.abn ?? "",
+        suburb: p.suburb ?? "",
+        state: p.state ?? "",
+        phone: p.phone ?? "",
+        description: p.description ?? "",
+      });
+      setApprovalStatus(p.approval_status ?? null);
+      setLogoUrl(p.logo_url ?? null);
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+      setProfileLoading(false);
+    }
+    load();
+  }, [user?.id]);
+
+  // ── Subscription lazy load ──
+  useEffect(() => {
+    if (activeTab !== "subscription" || subLoaded || !user) return;
+    async function load() {
+      setSubLoading(true);
+      const { data } = await createClient()
+        .from("vendor_subscriptions")
+        .select("status, current_period_end, stripe_subscription_id")
+        .eq("vendor_id", user!.id)
+        .maybeSingle();
+      const s = data as Subscription;
+      setSubscription(s ? {
+        status: s.status ?? "active",
+        current_period_end: s.current_period_end ?? null,
+        stripe_subscription_id: s.stripe_subscription_id ?? null,
+      } : null);
+      setSubLoaded(true);
+      setSubLoading(false);
+    }
+    load();
+  }, [activeTab, subLoaded, user?.id]);
+
+  // ── Pay rates lazy load ──
+  useEffect(() => {
+    if (activeTab !== "payrates" || ratesLoaded || !user) return;
+    async function load() {
+      setRatesLoading(true);
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const { data } = await createClient()
+        .from("pay_rates")
+        .select("base_rate, evening_rate, saturday_rate, sunday_rate, public_holiday_rate")
+        .eq("vendor_id", user!.id)
+        .maybeSingle();
+      const r = (data ?? {}) as any;
+      const str = (v: any) => (v == null ? "" : String(v));
+      setRates({
+        base_rate: str(r.base_rate),
+        evening_rate: str(r.evening_rate),
+        saturday_rate: str(r.saturday_rate),
+        sunday_rate: str(r.sunday_rate),
+        public_holiday_rate: str(r.public_holiday_rate),
+      });
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+      setRatesLoaded(true);
+      setRatesLoading(false);
+    }
+    load();
+  }, [activeTab, ratesLoaded, user?.id]);
+
+  async function saveProfile() {
+    setSaving(true);
+    await createClient()
+      .from("vendor_profiles")
+      .update({
+        business_name: form.business_name.trim(),
+        abn: form.abn.trim() || null,
+        suburb: form.suburb.trim() || null,
+        state: form.state.trim() || null,
+        phone: form.phone.trim() || null,
+        description: form.description.trim() || null,
+      })
+      .eq("user_id", user!.id);
+    setSaving(false);
+    showToast();
+  }
+
+  async function uploadLogo(file: File) {
+    setUploadingLogo(true);
+    const supabase = createClient();
+    const path = `${user!.id}/${Date.now()}_${file.name}`;
+    const { error: upErr } = await supabase.storage.from("avatars").upload(path, file, { upsert: true });
+    if (!upErr) {
+      const { data: pub } = supabase.storage.from("avatars").getPublicUrl(path);
+      const url = pub.publicUrl;
+      await supabase.from("vendor_profiles").update({ logo_url: url }).eq("user_id", user!.id);
+      setLogoUrl(url);
+    }
+    setUploadingLogo(false);
+  }
+
+  async function savePayRates() {
+    setSavingRates(true);
+    const num = (v: string) => (v.trim() === "" ? null : parseFloat(v));
+    await createClient()
+      .from("pay_rates")
+      .upsert(
+        {
+          vendor_id: user!.id,
+          base_rate: num(rates.base_rate),
+          evening_rate: num(rates.evening_rate),
+          saturday_rate: num(rates.saturday_rate),
+          sunday_rate: num(rates.sunday_rate),
+          public_holiday_rate: num(rates.public_holiday_rate),
+        },
+        { onConflict: "vendor_id" }
+      );
+    setSavingRates(false);
+    showToast();
+  }
+
+  async function openPortal() {
+    setPortalBusy(true);
+    try {
+      const { data: { session } } = await createClient().auth.getSession();
+      const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/create-portal-session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
+      });
+      const json = await res.json();
+      if (json.url) window.location.href = json.url;
+    } finally {
+      setPortalBusy(false);
+    }
+  }
+
+  const approvalCfg = approvalStatus ? APPROVAL_CFG[approvalStatus.toLowerCase()] : null;
+
+  return (
+    <div className="max-w-3xl mx-auto px-5 py-8">
+      <h1 className="text-xl font-bold text-white mb-6">Settings</h1>
+
+      {/* Tabs */}
+      <div className="flex gap-0 mb-6 border-b border-white/[0.06]">
+        {([["profile", "Profile"], ["subscription", "Subscription"], ["payrates", "Pay Rates"]] as [Tab, string][]).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key)}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              activeTab === key ? "text-white border-[#FF6B35]" : "text-zinc-500 border-transparent hover:text-zinc-300"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Profile ── */}
+      {activeTab === "profile" && (
+        authLoading || profileLoading ? (
+          <SkeletonBlock />
+        ) : (
+          <div className="flex flex-col gap-6">
+            {/* Logo + approval */}
+            <div className="flex items-center gap-4">
+              {logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={logoUrl} alt="" className="w-16 h-16 rounded-full object-cover shrink-0" />
+              ) : (
+                <div className="w-16 h-16 rounded-full bg-[#FF6B35]/15 text-[#FF6B35] flex items-center justify-center text-xl font-bold shrink-0">
+                  {initials(form.business_name || "Vendor")}
+                </div>
+              )}
+              <div className="flex flex-col gap-2">
+                <label className={`cursor-pointer rounded-lg border border-[#FF6B35]/40 bg-[#FF6B35]/10 px-3 py-1.5 text-xs font-semibold text-[#FF6B35] hover:bg-[#FF6B35]/20 transition-colors ${uploadingLogo ? "opacity-50 pointer-events-none" : ""}`}>
+                  {uploadingLogo ? "Uploading…" : "Upload Logo"}
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadLogo(f); e.target.value = ""; }} />
+                </label>
+                {approvalCfg && (
+                  <span className={`inline-flex w-fit items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${approvalCfg.cls}`}>
+                    {approvalCfg.label}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <Field label="Business Name" value={form.business_name} onChange={(v) => setForm((p) => ({ ...p, business_name: v }))} />
+            <Field label="ABN" value={form.abn} onChange={(v) => setForm((p) => ({ ...p, abn: v }))} placeholder="12 345 678 901" />
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Suburb" value={form.suburb} onChange={(v) => setForm((p) => ({ ...p, suburb: v }))} />
+              <Field label="State" value={form.state} onChange={(v) => setForm((p) => ({ ...p, state: v }))} />
+            </div>
+            <Field label="Phone" value={form.phone} onChange={(v) => setForm((p) => ({ ...p, phone: v }))} />
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Business Description</label>
+              <textarea value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} rows={3}
+                className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-[#FF6B35] transition-colors resize-none" />
+            </div>
+
+            <button onClick={saveProfile} disabled={saving} className="self-start rounded-lg bg-[#FF6B35] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#ff7d4d] transition-colors disabled:opacity-50">
+              {saving ? "Saving…" : "Save Changes"}
+            </button>
+          </div>
+        )
+      )}
+
+      {/* ── Subscription ── */}
+      {activeTab === "subscription" && (
+        authLoading || subLoading ? (
+          <SkeletonBlock />
+        ) : !subscription ? (
+          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-6 py-16 flex flex-col items-center gap-3 text-center">
+            <div className="text-zinc-600">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+            </div>
+            <p className="text-zinc-400 font-medium">No active subscription</p>
+            <p className="text-zinc-600 text-sm max-w-xs">Subscribe to unlock premium vendor features.</p>
+            <button onClick={openPortal} disabled={portalBusy} className="mt-2 rounded-lg bg-[#FF6B35] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#ff7d4d] transition-colors disabled:opacity-50">
+              {portalBusy ? "Opening…" : "Subscribe"}
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-5 py-5">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div className="min-w-0">
+                  <p className="text-xs text-zinc-500 uppercase tracking-widest mb-1">Current Plan</p>
+                  <p className="text-lg font-bold text-white">Active Plan</p>
+                  {subscription.stripe_subscription_id && (
+                    <p className="text-xs text-zinc-600 mt-0.5 truncate">{subscription.stripe_subscription_id}</p>
+                  )}
+                </div>
+                <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${subStatusCls(subscription.status)}`}>
+                  {subscription.status.replace("_", " ").toUpperCase()}
+                </span>
+              </div>
+              <p className="text-xs text-zinc-500">Next billing date: <span className="text-zinc-300">{fmtDate(subscription.current_period_end)}</span></p>
+            </div>
+            <button onClick={openPortal} disabled={portalBusy} className="self-start rounded-lg border border-[#FF6B35]/40 bg-[#FF6B35]/10 px-5 py-2.5 text-sm font-semibold text-[#FF6B35] hover:bg-[#FF6B35]/20 transition-colors disabled:opacity-50">
+              {portalBusy ? "Opening…" : "Manage Subscription"}
+            </button>
+          </div>
+        )
+      )}
+
+      {/* ── Pay Rates ── */}
+      {activeTab === "payrates" && (
+        authLoading || ratesLoading ? (
+          <SkeletonBlock />
+        ) : (
+          <div className="flex flex-col gap-5">
+            <p className="text-xs text-zinc-500">Set the hourly rates applied to your staff&apos;s shifts.</p>
+            <div className="flex flex-col gap-4">
+              <RateField label="Base Rate" value={rates.base_rate} onChange={(v) => setRates((p) => ({ ...p, base_rate: v }))} />
+              <RateField label="Evening Rate" value={rates.evening_rate} onChange={(v) => setRates((p) => ({ ...p, evening_rate: v }))} />
+              <RateField label="Saturday Rate" value={rates.saturday_rate} onChange={(v) => setRates((p) => ({ ...p, saturday_rate: v }))} />
+              <RateField label="Sunday Rate" value={rates.sunday_rate} onChange={(v) => setRates((p) => ({ ...p, sunday_rate: v }))} />
+              <RateField label="Public Holiday Rate" value={rates.public_holiday_rate} onChange={(v) => setRates((p) => ({ ...p, public_holiday_rate: v }))} />
+            </div>
+            <button onClick={savePayRates} disabled={savingRates} className="self-start rounded-lg bg-[#FF6B35] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#ff7d4d] transition-colors disabled:opacity-50">
+              {savingRates ? "Saving…" : "Save Pay Rates"}
+            </button>
+          </div>
+        )
+      )}
+
+      {/* Success toast */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm font-medium text-emerald-400 shadow-xl">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          Settings saved
+        </div>
+      )}
+    </div>
+  );
+}
