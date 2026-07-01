@@ -29,20 +29,28 @@ const PERIODS: { key: Period; label: string }[] = [
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function periodStart(period: Period): Date | null {
-  const now = new Date();
+const AEST_OFFSET_MIN = 10 * 60; // AEST = UTC+10 (no DST)
+
+// Returns the period start as a UTC epoch (ms), or null for "all".
+function periodStart(period: Period): number | null {
   switch (period) {
     case "today": {
-      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      // Start of today in AEST, expressed as a real UTC timestamp
+      const aestNow = new Date(Date.now() + AEST_OFFSET_MIN * 60000);
+      const midnightWall = Date.UTC(aestNow.getUTCFullYear(), aestNow.getUTCMonth(), aestNow.getUTCDate());
+      return midnightWall - AEST_OFFSET_MIN * 60000;
     }
     case "week": {
+      const now = new Date();
       const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const day = (d.getDay() + 6) % 7; // Monday = 0
       d.setDate(d.getDate() - day);
-      return d;
+      return d.getTime();
     }
-    case "month":
-      return new Date(now.getFullYear(), now.getMonth(), 1);
+    case "month": {
+      const now = new Date();
+      return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    }
     case "all":
       return null;
   }
@@ -117,9 +125,8 @@ export default function VendorAnalyticsPage() {
 
   // Filter by selected period
   const tx = useMemo(() => {
-    const start = periodStart(period);
-    if (!start) return allTx;
-    const startMs = start.getTime();
+    const startMs = periodStart(period);
+    if (startMs == null) return allTx;
     return allTx.filter((t) => t.square_created_at && new Date(t.square_created_at).getTime() >= startMs);
   }, [allTx, period]);
 
@@ -217,6 +224,11 @@ export default function VendorAnalyticsPage() {
           {/* Revenue Over Time */}
           <section>
             <SectionTitle>Revenue Over Time</SectionTitle>
+            {byDay.length === 0 ? (
+              <div className="rounded-2xl border border-white/[0.06] bg-[#111] px-4 py-10 text-center">
+                <p className="text-sm text-zinc-600">No data for this period.</p>
+              </div>
+            ) : (
             <div className="rounded-2xl border border-white/[0.06] bg-[#111] px-3 py-5">
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={byDay} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
@@ -238,6 +250,7 @@ export default function VendorAnalyticsPage() {
                 </BarChart>
               </ResponsiveContainer>
             </div>
+            )}
           </section>
 
           {/* Top Events by Revenue */}
@@ -268,6 +281,9 @@ export default function VendorAnalyticsPage() {
           {/* Payment Methods */}
           <section>
             <SectionTitle>Payment Methods</SectionTitle>
+            {paymentMethods.length === 0 ? (
+              <p className="text-sm text-zinc-600">No data for this period.</p>
+            ) : (
             <div className="flex flex-col gap-3">
               {paymentMethods.map((p) => (
                 <div key={p.method} className="rounded-xl border border-white/[0.06] bg-[#111] px-4 py-3">
@@ -283,6 +299,7 @@ export default function VendorAnalyticsPage() {
                 </div>
               ))}
             </div>
+            )}
           </section>
         </div>
       )}

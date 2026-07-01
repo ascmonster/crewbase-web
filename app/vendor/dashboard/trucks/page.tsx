@@ -15,21 +15,20 @@ type TruckRow = {
   name: string;
   description: string | null;
   is_active: boolean;
+  photo_url: string | null;
+  terminal_device_id: string | null;
+  terminal_name: string | null;
   staff_count: number;
   event_count: number;
+  staff: TruckStaffMember[];
 };
+
+type TruckStaffMember = { assignment_id: string; staff_id: string; full_name: string };
 
 type SquareInfo = {
   connected: boolean;
   merchant_name: string | null;
   location_name: string | null;
-};
-
-type PosDevice = {
-  id: string;
-  device_name: string;
-  last_active: string | null;
-  status: string | null;
 };
 
 type Tab = "trucks" | "pos";
@@ -42,27 +41,16 @@ function truckStatusCls(isActive: boolean) {
     : "bg-zinc-500/10 text-zinc-400 ring-1 ring-zinc-500/20";
 }
 
-function fmtDateTime(s: string | null) {
-  if (!s) return "—";
-  return new Date(s).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
-
 /* eslint-disable @typescript-eslint/no-explicit-any */
-function normTruck(raw: any): Omit<TruckRow, "staff_count" | "event_count"> {
+function normTruck(raw: any): Omit<TruckRow, "staff_count" | "event_count" | "staff"> {
   return {
     id: raw.id,
     name: raw.name ?? raw.truck_name ?? "Truck",
     description: raw.description ?? null,
     is_active: raw.is_active ?? true,
-  };
-}
-
-function normDevice(raw: any): PosDevice {
-  return {
-    id: raw.id ?? raw.device_id ?? String(raw.session_id ?? Math.random()),
-    device_name: raw.device_name ?? raw.name ?? raw.device_id ?? "Device",
-    last_active: raw.last_active_at ?? raw.last_active ?? raw.last_seen_at ?? raw.updated_at ?? null,
-    status: raw.status ?? null,
+    photo_url: raw.photo_url ?? null,
+    terminal_device_id: raw.square_terminal_device_id ?? null,
+    terminal_name: raw.square_terminal_name ?? null,
   };
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -105,7 +93,7 @@ function TruckIcon() {
 function AddTruckModal({ vendorId, onClose, onAdded }: {
   vendorId: string;
   onClose: () => void;
-  onAdded: (t: Omit<TruckRow, "staff_count" | "event_count">) => void;
+  onAdded: (t: Omit<TruckRow, "staff_count" | "event_count" | "staff">) => void;
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -191,7 +179,7 @@ export default function VendorTrucksPage() {
   const [editActive, setEditActive] = useState(true);
 
   const [square, setSquare] = useState<SquareInfo | null>(null);
-  const [devices, setDevices] = useState<PosDevice[]>([]);
+  const [terminalTrucks, setTerminalTrucks] = useState<{ id: string; name: string; terminal_device_id: string | null; terminal_name: string | null }[]>([]);
   const [posLoaded, setPosLoaded] = useState(false);
   const [posLoading, setPosLoading] = useState(false);
 
@@ -212,18 +200,30 @@ export default function VendorTrucksPage() {
       const base = ((truckRows ?? []) as unknown[]).map(normTruck);
       const truckIds = base.map((t) => t.id);
 
-      const staffCount: Record<string, number> = {};
       const eventCount: Record<string, number> = {};
+      const staffByTruck: Record<string, TruckStaffMember[]> = {};
       if (truckIds.length > 0) {
+        /* eslint-disable @typescript-eslint/no-explicit-any */
         const [staffRes, eventRes] = await Promise.all([
-          supabase.from("truck_staff").select("truck_id").in("truck_id", truckIds),
+          supabase.from("truck_staff").select("*").in("truck_id", truckIds),
           supabase.from("event_trucks").select("truck_id").in("truck_id", truckIds),
         ]);
-        for (const r of (staffRes.data ?? []) as { truck_id: string }[]) staffCount[r.truck_id] = (staffCount[r.truck_id] ?? 0) + 1;
         for (const r of (eventRes.data ?? []) as { truck_id: string }[]) eventCount[r.truck_id] = (eventCount[r.truck_id] ?? 0) + 1;
+
+        const tsRows = (staffRes.data ?? []) as any[];
+        const staffIds = [...new Set(tsRows.map((r) => r.staff_id).filter(Boolean))];
+        let nameMap: Record<string, string> = {};
+        if (staffIds.length > 0) {
+          const { data: users } = await supabase.from("users").select("id, full_name").in("id", staffIds);
+          nameMap = Object.fromEntries(((users ?? []) as { id: string; full_name: string }[]).map((u) => [u.id, u.full_name]));
+        }
+        for (const r of tsRows) {
+          (staffByTruck[r.truck_id] ??= []).push({ assignment_id: r.id, staff_id: r.staff_id, full_name: nameMap[r.staff_id] ?? "Unknown" });
+        }
+        /* eslint-enable @typescript-eslint/no-explicit-any */
       }
 
-      setTrucks(base.map((t) => ({ ...t, staff_count: staffCount[t.id] ?? 0, event_count: eventCount[t.id] ?? 0 })));
+      setTrucks(base.map((t) => ({ ...t, staff: staffByTruck[t.id] ?? [], staff_count: (staffByTruck[t.id] ?? []).length, event_count: eventCount[t.id] ?? 0 })));
       setTrucksLoaded(true);
       setTrucksLoading(false);
     }
@@ -238,9 +238,9 @@ export default function VendorTrucksPage() {
       const supabase = createClient();
       const uid = user!.id;
 
-      const [profileRes, deviceRes] = await Promise.all([
+      const [profileRes, truckRes] = await Promise.all([
         supabase.from("vendor_profiles").select("square_connected, square_merchant_name, square_location_name").eq("user_id", uid).maybeSingle(),
-        supabase.from("pos_device_sessions").select("*").eq("vendor_id", uid),
+        supabase.from("vendor_trucks").select("id, name, square_terminal_device_id, square_terminal_name").eq("vendor_id", uid).order("name", { ascending: true }),
       ]);
 
       const p = profileRes.data as { square_connected: boolean | null; square_merchant_name: string | null; square_location_name: string | null } | null;
@@ -249,7 +249,8 @@ export default function VendorTrucksPage() {
         merchant_name: p?.square_merchant_name ?? null,
         location_name: p?.square_location_name ?? null,
       });
-      setDevices(((deviceRes.data ?? []) as unknown[]).map(normDevice));
+      /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+      setTerminalTrucks(((truckRes.data ?? []) as any[]).map((t) => ({ id: t.id, name: t.name, terminal_device_id: t.square_terminal_device_id ?? null, terminal_name: t.square_terminal_name ?? null })));
       setPosLoaded(true);
       setPosLoading(false);
     }
@@ -260,6 +261,13 @@ export default function VendorTrucksPage() {
     await createClient().from("vendor_trucks").delete().eq("id", id).eq("vendor_id", user!.id);
     setTrucks((prev) => prev.filter((t) => t.id !== id));
     setConfirmDelete(null);
+  }
+
+  async function removeTruckStaff(truckId: string, assignmentId: string) {
+    await createClient().from("truck_staff").delete().eq("id", assignmentId);
+    setTrucks((prev) => prev.map((t) => t.id === truckId
+      ? { ...t, staff: t.staff.filter((s) => s.assignment_id !== assignmentId), staff_count: Math.max(0, t.staff_count - 1) }
+      : t));
   }
 
   function startEdit(t: TruckRow) {
@@ -342,7 +350,12 @@ export default function VendorTrucksPage() {
                 ) : (
                   <>
                     <div className="flex items-start gap-3">
-                      <TruckIcon />
+                      {t.photo_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={t.photo_url} alt="" className="w-11 h-11 rounded-lg object-cover shrink-0" />
+                      ) : (
+                        <div className="w-11 h-11 rounded-lg bg-[#FF6B35]/10 flex items-center justify-center shrink-0"><TruckIcon /></div>
+                      )}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-semibold text-white truncate">{t.name}</p>
@@ -375,6 +388,25 @@ export default function VendorTrucksPage() {
                           </button>
                         )}
                       </div>
+                    </div>
+
+                    {/* Assigned staff */}
+                    <div className="mt-3 pt-3 border-t border-white/[0.05]">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mb-2">Assigned Staff</p>
+                      {t.staff.length === 0 ? (
+                        <p className="text-xs text-zinc-600">No staff assigned.</p>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {t.staff.map((s) => (
+                            <span key={s.assignment_id} className="flex items-center gap-1.5 rounded-full bg-white/[0.04] border border-white/[0.08] pl-2.5 pr-1.5 py-1 text-xs text-zinc-300">
+                              {s.full_name}
+                              <button onClick={() => removeTruckStaff(t.id, s.assignment_id)} className="text-zinc-500 hover:text-rose-400 transition-colors" aria-label={`Remove ${s.full_name}`}>
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </>
                 )}
@@ -424,31 +456,34 @@ export default function VendorTrucksPage() {
               </div>
             </div>
 
-            {/* POS devices */}
+            {/* Square Terminal per truck */}
             <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-3">POS Devices</p>
-              {devices.length === 0 ? (
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-3">Square Terminal by Truck</p>
+              {terminalTrucks.length === 0 ? (
                 <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-8 text-center">
-                  <p className="text-sm text-zinc-500">No POS devices paired.</p>
+                  <p className="text-sm text-zinc-500">No trucks yet.</p>
                 </div>
               ) : (
                 <div className="flex flex-col gap-3">
-                  {devices.map((d) => (
-                    <div key={d.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 flex items-center gap-4">
-                      <div className="w-9 h-9 rounded-lg bg-[#FF6B35]/15 text-[#FF6B35] flex items-center justify-center shrink-0">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18"/></svg>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-white truncate">{d.device_name}</p>
-                        <p className="text-xs text-zinc-500 mt-0.5">Last active {fmtDateTime(d.last_active)}</p>
-                      </div>
-                      {d.status && (
-                        <span className="shrink-0 rounded-full border border-white/[0.08] bg-white/[0.02] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
-                          {d.status}
+                  {terminalTrucks.map((t) => {
+                    const paired = !!t.terminal_device_id;
+                    return (
+                      <div key={t.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 flex items-center gap-4">
+                        <div className="w-9 h-9 rounded-lg bg-[#FF6B35]/15 text-[#FF6B35] flex items-center justify-center shrink-0">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18"/></svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-white truncate">{t.name}</p>
+                          <p className="text-xs text-zinc-500 mt-0.5 font-mono truncate">
+                            {paired ? (t.terminal_name ?? t.terminal_device_id) : "No terminal paired"}
+                          </p>
+                        </div>
+                        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${paired ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-500/10 text-zinc-400"}`}>
+                          {paired ? "Paired" : "Unpaired"}
                         </span>
-                      )}
-                    </div>
-                  ))}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -460,7 +495,7 @@ export default function VendorTrucksPage() {
         <AddTruckModal
           vendorId={user.id}
           onClose={() => setShowAdd(false)}
-          onAdded={(t) => setTrucks((prev) => [{ ...t, staff_count: 0, event_count: 0 }, ...prev])}
+          onAdded={(t) => setTrucks((prev) => [{ ...t, staff: [], staff_count: 0, event_count: 0 }, ...prev])}
         />
       )}
     </div>

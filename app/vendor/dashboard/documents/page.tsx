@@ -25,7 +25,12 @@ type EventRequestRow = {
   event_name: string;
   doc_types: string[] | null;
   status: string;
+  due_date: string | null;
 };
+
+function isOverdue(r: EventRequestRow) {
+  return r.status.toLowerCase() === "pending" && !!r.due_date && new Date(r.due_date).getTime() < Date.now();
+}
 
 type Tab = "my" | "business" | "requests";
 type UploadTarget = "my" | "business";
@@ -206,8 +211,10 @@ function DocRowItem({ doc, bucket, onDelete, showViewed }: {
       <div className="flex-1 min-w-0">
         <p className="text-sm font-semibold text-white truncate">{doc.file_name}</p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-          {doc.document_type && <span className="text-xs text-zinc-500">{doc.document_type}</span>}
-          <span className="text-xs text-zinc-600">· {fmtDate(doc.created_at)}</span>
+          {doc.document_type && (
+            <span className="rounded-full bg-[#FF6B35]/10 px-2 py-0.5 text-[10px] font-semibold text-[#FF6B35]">{doc.document_type}</span>
+          )}
+          <span className="text-xs text-zinc-600">{fmtDate(doc.created_at)}</span>
           {showViewed && doc.viewed != null && (
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${doc.viewed ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-500/10 text-zinc-400"}`}>
               {doc.viewed ? "Viewed by promoter" : "Not viewed"}
@@ -311,10 +318,11 @@ export default function VendorDocumentsPage() {
       const supabase = createClient();
       const { data: reqRows } = await supabase
         .from("event_document_requests")
-        .select("id, event_id, doc_types, status")
+        .select("*")
         .eq("vendor_id", vendorProfileId);
 
-      const rows = (reqRows ?? []) as { id: string; event_id: string; doc_types: string[] | null; status: string }[];
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const rows = (reqRows ?? []) as any[];
       const eventIds = [...new Set(rows.map((r) => r.event_id))];
 
       let nameMap: Record<string, string> = {};
@@ -329,7 +337,9 @@ export default function VendorDocumentsPage() {
         event_name: nameMap[r.event_id] ?? "Event",
         doc_types: r.doc_types,
         status: r.status,
+        due_date: r.due_date ?? null,
       })));
+      /* eslint-enable @typescript-eslint/no-explicit-any */
       setReqLoaded(true);
       setReqLoading(false);
     }
@@ -446,9 +456,15 @@ export default function VendorDocumentsPage() {
             {requests.map((r) => (
               <div key={r.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 flex items-center gap-4">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-white truncate">{r.event_name}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-white truncate">{r.event_name}</p>
+                    {isOverdue(r) && (
+                      <span className="shrink-0 rounded-full bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-400 ring-1 ring-rose-500/20">OVERDUE</span>
+                    )}
+                  </div>
                   <p className="text-xs text-zinc-500 mt-0.5">
                     {r.doc_types && r.doc_types.length > 0 ? r.doc_types.join(", ") : "Document requested"}
+                    {r.due_date && <span className="text-zinc-600"> · Due {fmtDate(r.due_date)}</span>}
                   </p>
                 </div>
                 {r.status.toLowerCase() === "pending" ? (

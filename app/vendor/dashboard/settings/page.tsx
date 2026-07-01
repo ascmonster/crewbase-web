@@ -29,6 +29,7 @@ type Subscription = {
   status: string;
   current_period_end: string | null;
   stripe_subscription_id: string | null;
+  stripe_customer_id: string | null;
 } | null;
 
 type Tab = "profile" | "subscription" | "payrates";
@@ -114,6 +115,7 @@ export default function VendorSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [toast, setToast] = useState(false);
+  const [onboardingComplete, setOnboardingComplete] = useState(false);
 
   // Subscription
   const [subscription, setSubscription] = useState<Subscription>(null);
@@ -140,7 +142,7 @@ export default function VendorSettingsPage() {
       /* eslint-disable @typescript-eslint/no-explicit-any */
       const { data } = await createClient()
         .from("vendor_profiles")
-        .select("business_name, abn, suburb, state, phone, description, approval_status, logo_url")
+        .select("business_name, abn, suburb, state, phone, description, approval_status, logo_url, onboarding_complete")
         .eq("user_id", user!.id)
         .maybeSingle();
       const p = (data ?? {}) as any;
@@ -154,6 +156,7 @@ export default function VendorSettingsPage() {
       });
       setApprovalStatus(p.approval_status ?? null);
       setLogoUrl(p.logo_url ?? null);
+      setOnboardingComplete(!!p.onboarding_complete);
       /* eslint-enable @typescript-eslint/no-explicit-any */
       setProfileLoading(false);
     }
@@ -167,7 +170,7 @@ export default function VendorSettingsPage() {
       setSubLoading(true);
       const { data } = await createClient()
         .from("vendor_subscriptions")
-        .select("status, current_period_end, stripe_subscription_id")
+        .select("status, current_period_end, stripe_subscription_id, stripe_customer_id")
         .eq("vendor_id", user!.id)
         .maybeSingle();
       const s = data as Subscription;
@@ -175,6 +178,7 @@ export default function VendorSettingsPage() {
         status: s.status ?? "active",
         current_period_end: s.current_period_end ?? null,
         stripe_subscription_id: s.stripe_subscription_id ?? null,
+        stripe_customer_id: s.stripe_customer_id ?? null,
       } : null);
       setSubLoaded(true);
       setSubLoading(false);
@@ -220,6 +224,7 @@ export default function VendorSettingsPage() {
         state: form.state.trim() || null,
         phone: form.phone.trim() || null,
         description: form.description.trim() || null,
+        onboarding_complete: onboardingComplete,
       })
       .eq("user_id", user!.id);
     setSaving(false);
@@ -267,6 +272,7 @@ export default function VendorSettingsPage() {
       const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/create-portal-session`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
+        body: JSON.stringify({ stripe_customer_id: subscription?.stripe_customer_id ?? null }),
       });
       const json = await res.json();
       if (json.url) window.location.href = json.url;
@@ -337,6 +343,21 @@ export default function VendorSettingsPage() {
               <textarea value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} rows={3}
                 className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-[#FF6B35] transition-colors resize-none" />
             </div>
+
+            {/* Onboarding complete toggle */}
+            <button
+              type="button"
+              onClick={() => setOnboardingComplete((v) => !v)}
+              className="flex items-center justify-between rounded-lg border border-white/[0.08] bg-white/[0.02] px-4 py-3"
+            >
+              <div className="text-left">
+                <p className="text-sm font-medium text-white">Onboarding Complete</p>
+                <p className="text-xs text-zinc-500">Mark your vendor setup as finished.</p>
+              </div>
+              <span className={`relative w-11 h-6 rounded-full transition-colors ${onboardingComplete ? "bg-[#FF6B35]" : "bg-white/[0.12]"}`}>
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${onboardingComplete ? "translate-x-5" : ""}`} />
+              </span>
+            </button>
 
             <button onClick={saveProfile} disabled={saving} className="self-start rounded-lg bg-[#FF6B35] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#ff7d4d] transition-colors disabled:opacity-50">
               {saving ? "Saving…" : "Save Changes"}

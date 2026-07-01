@@ -260,6 +260,7 @@ export default function VendorJobsPage() {
   const [appsLoaded, setAppsLoaded] = useState(false);
   const [appsLoading, setAppsLoading] = useState(false);
   const [filterJob, setFilterJob] = useState<string>("all");
+  const [jobFilter, setJobFilter] = useState<"all" | "open" | "closed" | "filled">("all");
   const [busyApp, setBusyApp] = useState<string | null>(null);
 
   // ── Jobs load ──
@@ -405,18 +406,45 @@ export default function VendorJobsPage() {
             title="No job postings yet"
             sub="Post a job to start receiving applicants."
           />
-        ) : (
-          <div className="flex flex-col gap-3">
-            {jobs.map((j) => {
+        ) : (() => {
+          const visibleJobs = jobFilter === "all" ? jobs : jobs.filter((j) => j.status.toLowerCase() === jobFilter);
+          return (
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-zinc-500">Filter:</label>
+              <select
+                value={jobFilter}
+                onChange={(e) => setJobFilter(e.target.value as typeof jobFilter)}
+                className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-1.5 text-sm text-white outline-none focus:border-[#FF6B35] transition-colors [color-scheme:dark]"
+              >
+                <option value="all">All</option>
+                <option value="open">Open</option>
+                <option value="closed">Closed</option>
+                <option value="filled">Filled</option>
+              </select>
+            </div>
+            {visibleJobs.length === 0 ? (
+              <EmptyState
+                icon={<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>}
+                title={`No ${jobFilter} jobs`}
+              />
+            ) : (
+            <div className="flex flex-col gap-3">
+            {visibleJobs.map((j) => {
               const timeRange = [fmtTime(j.start_time), fmtTime(j.end_time)].filter(Boolean).join(" – ");
               return (
                 <div key={j.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] hover:border-[#FF6B35]/30 transition-colors">
                   <button onClick={() => openApplicantsFor(j.id)} className="w-full text-left px-4 py-4">
                     <div className="flex items-start justify-between gap-3 mb-1.5">
                       <p className="text-sm font-semibold text-white">{j.title}</p>
-                      <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${jobStatusCls(j.status)}`}>
-                        {j.status.toUpperCase()}
-                      </span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="rounded-full bg-[#FF6B35]/10 px-2 py-0.5 text-xs font-semibold text-[#FF6B35]">
+                          {j.applicant_count} applicant{j.applicant_count !== 1 ? "s" : ""}
+                        </span>
+                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${jobStatusCls(j.status)}`}>
+                          {j.status.toUpperCase()}
+                        </span>
+                      </div>
                     </div>
                     {j.body && (
                       <p className="text-xs text-zinc-500 line-clamp-2 mb-2 whitespace-pre-line">{j.body}</p>
@@ -448,8 +476,11 @@ export default function VendorJobsPage() {
                 </div>
               );
             })}
+            </div>
+            )}
           </div>
-        )
+          );
+        })()
       )}
 
       {/* ── Applicants ── */}
