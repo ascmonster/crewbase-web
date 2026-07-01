@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useRequireVendorAuth } from "@/lib/useRequireVendorAuth";
 import { createClient } from "@/lib/supabase";
 
@@ -105,6 +107,7 @@ function RateField({ label, value, onChange }: { label: string; value: string; o
 
 export default function VendorSettingsPage() {
   const { user, loading: authLoading } = useRequireVendorAuth();
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
 
   // Profile
@@ -116,6 +119,8 @@ export default function VendorSettingsPage() {
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [toast, setToast] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState(false);
+  const [squareConnected, setSquareConnected] = useState(false);
+  const [squareMerchantName, setSquareMerchantName] = useState<string | null>(null);
 
   // Subscription
   const [subscription, setSubscription] = useState<Subscription>(null);
@@ -142,7 +147,7 @@ export default function VendorSettingsPage() {
       /* eslint-disable @typescript-eslint/no-explicit-any */
       const { data } = await createClient()
         .from("vendor_profiles")
-        .select("business_name, abn, suburb, state, phone, description, approval_status, logo_url, onboarding_complete")
+        .select("business_name, abn, suburb, state, phone, description, approval_status, logo_url, onboarding_complete, square_connected, square_merchant_name")
         .eq("user_id", user!.id)
         .maybeSingle();
       const p = (data ?? {}) as any;
@@ -157,6 +162,8 @@ export default function VendorSettingsPage() {
       setApprovalStatus(p.approval_status ?? null);
       setLogoUrl(p.logo_url ?? null);
       setOnboardingComplete(!!p.onboarding_complete);
+      setSquareConnected(p.square_connected === true);
+      setSquareMerchantName(p.square_merchant_name ?? null);
       /* eslint-enable @typescript-eslint/no-explicit-any */
       setProfileLoading(false);
     }
@@ -281,6 +288,20 @@ export default function VendorSettingsPage() {
     }
   }
 
+  async function disconnectSquare() {
+    await createClient()
+      .from("vendor_profiles")
+      .update({ square_connected: false, square_access_token: null, square_merchant_id: null })
+      .eq("user_id", user!.id);
+    setSquareConnected(false);
+    setSquareMerchantName(null);
+  }
+
+  async function signOut() {
+    await createClient().auth.signOut();
+    router.replace("/login");
+  }
+
   const approvalCfg = approvalStatus ? APPROVAL_CFG[approvalStatus.toLowerCase()] : null;
 
   return (
@@ -361,6 +382,49 @@ export default function VendorSettingsPage() {
 
             <button onClick={saveProfile} disabled={saving} className="self-start rounded-lg bg-[#FF6B35] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#ff7d4d] transition-colors disabled:opacity-50">
               {saving ? "Saving…" : "Save Changes"}
+            </button>
+
+            {/* Square Payments */}
+            <div className="rounded-2xl bg-white/[0.02] border border-white/[0.06] border-l-4 border-l-[#FF6B35] px-5 py-5 mt-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-3">Square Payments</p>
+              <div className="flex items-center gap-2 mb-4">
+                <span className={`w-2.5 h-2.5 rounded-full ${squareConnected ? "bg-emerald-400" : "bg-zinc-500"}`} />
+                <span className={`text-sm font-medium ${squareConnected ? "text-emerald-400" : "text-zinc-400"}`}>
+                  {squareConnected ? `Square Connected ✓${squareMerchantName ? ` — ${squareMerchantName}` : ""}` : "Not Connected"}
+                </span>
+              </div>
+              {squareConnected ? (
+                <div className="flex flex-wrap gap-3">
+                  <Link href="/vendor/dashboard/analytics" className="rounded-lg border border-[#FF6B35]/40 bg-[#FF6B35]/10 px-4 py-2 text-sm font-semibold text-[#FF6B35] hover:bg-[#FF6B35]/20 transition-colors">
+                    View Revenue Dashboard
+                  </Link>
+                  <button onClick={disconnectSquare} className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-400 hover:bg-rose-500/20 transition-colors">
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <a href={`/api/square/connect?type=vendor&user_id=${user!.id}`} className="block w-full text-center rounded-lg bg-[#FF6B35] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#ff7d4d] transition-colors">
+                  Connect Square
+                </a>
+              )}
+            </div>
+
+            {/* Account */}
+            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-5 py-4 mt-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-3">Account</p>
+              <div className="flex items-center justify-between py-2 border-b border-white/[0.05]">
+                <span className="text-sm text-zinc-500">Email</span>
+                <span className="text-sm text-white truncate ml-3">{user!.email || "—"}</span>
+              </div>
+              <div className="flex items-center justify-between py-2">
+                <span className="text-sm text-zinc-500">Role</span>
+                <span className="text-sm text-white">Vendor</span>
+              </div>
+            </div>
+
+            {/* Sign out */}
+            <button onClick={signOut} className="self-stretch rounded-lg border border-white/[0.08] px-5 py-2.5 text-sm font-semibold text-zinc-400 hover:text-white hover:bg-white/[0.04] transition-colors mt-2">
+              Sign Out
             </button>
           </div>
         )
