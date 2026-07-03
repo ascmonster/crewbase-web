@@ -238,10 +238,13 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
         .select("transaction_id, amount_cents, net_amount_cents, payment_method, square_created_at, fetched_at")
         .eq("event_id", id)
         .eq("vendor_id", user!.id)
-        .not("payment_method", "in", '("refund","refunded")')
         .order("square_created_at", { ascending: false, nullsFirst: false });
-      // Exclude negative (refund) rows using the coalesced amount
-      const rows = ((data as TxRow[]) ?? []).filter((t) => (t.net_amount_cents ?? t.amount_cents ?? 0) >= 0);
+      // Exclude refunds / negative rows using the coalesced amount
+      const rows = ((data as TxRow[]) ?? []).filter((t) => {
+        const method = t.payment_method?.toLowerCase();
+        if (method === "refund" || method === "refunded") return false;
+        return (t.net_amount_cents ?? t.amount_cents ?? 0) >= 0;
+      });
       setTxRows(rows);
       setTxLoaded(true);
       setTxLoading(false);
