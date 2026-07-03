@@ -36,6 +36,7 @@ type TxRow = {
   payment_method: string | null;
   card_last_4?: string | null; // not stored in current schema — rendered only if present
   square_created_at: string | null;
+  fetched_at: string | null;
 };
 
 type StaffRow = {
@@ -234,10 +235,12 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
       setTxLoading(true);
       const { data } = await createClient()
         .from("square_transactions")
-        .select("transaction_id, amount_cents, net_amount_cents, payment_method, square_created_at")
+        .select("transaction_id, amount_cents, net_amount_cents, payment_method, square_created_at, fetched_at")
         .eq("event_id", id)
         .eq("vendor_id", user!.id)
-        .order("square_created_at", { ascending: false });
+        .not("payment_method", "in", '("refund","refunded")')
+        .gt("amount_cents", 0)
+        .order("square_created_at", { ascending: false, nullsFirst: false });
       setTxRows((data as TxRow[]) ?? []);
       setTxLoaded(true);
       setTxLoading(false);
@@ -331,7 +334,7 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
 
   const display = deriveDisplayStatus(event);
   const { label, cls } = statusCfg(display);
-  const totalRevenue = txRows.reduce((s, t) => s + (t.net_amount_cents ?? 0), 0);
+  const totalRevenue = txRows.reduce((s, t) => s + (t.net_amount_cents ?? t.amount_cents ?? 0), 0);
   const visibleTx = txRows.slice(0, txVisible);
 
   const TABS: { key: Tab; label: string }[] = [
@@ -477,8 +480,8 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
                   {visibleTx.map((t) => (
                     <div key={t.transaction_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 flex items-center justify-between gap-3">
                       <div className="flex flex-col gap-0.5 min-w-0">
-                        <p className="text-sm font-medium text-white">{fmtMoney(t.net_amount_cents ?? 0)}</p>
-                        <p className="text-xs text-zinc-500">{fmtDateTime(t.square_created_at)}</p>
+                        <p className="text-sm font-medium text-white">{fmtMoney(t.net_amount_cents ?? t.amount_cents ?? 0)}</p>
+                        <p className="text-xs text-zinc-500">{fmtDateTime(t.square_created_at ?? t.fetched_at)}</p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <span className="rounded-full border border-white/[0.08] bg-white/[0.02] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
