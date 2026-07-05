@@ -51,6 +51,7 @@ type StaffProfile = {
   id?: string; // staff_profiles PK — not the auth uid
   user_id: string; // auth uid = event_staff.staff_id
   full_name: string;
+  photo_url?: string | null;
 };
 
 type CheckinRow = {
@@ -172,12 +173,18 @@ function timeAgo(s: string | null) {
   return fmtDateTime(s);
 }
 
-function Avatar({ name }: { name: string }) {
+function Avatar({ name, photoUrl }: { name: string; photoUrl?: string | null }) {
   const parts = name.trim().split(/\s+/);
   const initials =
     parts.length >= 2
       ? (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase()
       : name.charAt(0).toUpperCase();
+  if (photoUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={photoUrl} alt={name} className="w-9 h-9 rounded-full object-cover shrink-0" />
+    );
+  }
   return (
     <div className="w-9 h-9 rounded-full bg-violet-600/20 text-violet-300 flex items-center justify-center text-sm font-bold shrink-0">
       {initials}
@@ -573,6 +580,7 @@ type StaffSearchResult = {
   full_name: string;
   username: string | null;
   avg_rating: number | null;
+  photo_url: string | null;
 };
 
 function AddGateStaffModal({
@@ -599,11 +607,11 @@ function AddGateStaffModal({
 
     const { data: profiles } = await supabase
       .from("staff_profiles")
-      .select("id, user_id, full_name, username")
+      .select("id, user_id, full_name, username, photo_url")
       .or(`username.ilike.%${q}%,full_name.ilike.%${q}%`)
       .limit(10);
 
-    const rows = (profiles ?? []) as { id: string; user_id: string; full_name: string; username: string | null }[];
+    const rows = (profiles ?? []) as { id: string; user_id: string; full_name: string; username: string | null; photo_url: string | null }[];
     if (rows.length === 0) { setResults([]); setSearching(false); return; }
 
     const ids = rows.map((r) => r.id);
@@ -631,7 +639,7 @@ function AddGateStaffModal({
     if (!error && data) {
       onAdded(
         data as EventStaffRow,
-        { id: result.id, user_id: result.user_id, full_name: result.full_name }
+        { id: result.id, user_id: result.user_id, full_name: result.full_name, photo_url: result.photo_url }
       );
       setResults((r) => r.filter((x) => x.id !== result.id));
     }
@@ -1065,7 +1073,7 @@ function StaffTab({
         const vendorName = assignedVendorId ? vendorMap[assignedVendorId] : null;
         return (
           <div key={s.staff_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 flex items-center gap-4">
-            <Avatar name={name} />
+            <Avatar name={name} photoUrl={profile?.photo_url} />
             <div className="flex-1 min-w-0">
               <p className="font-semibold text-white text-sm">{name}</p>
               {vendorName && <p className="text-xs text-zinc-500 mt-0.5">via {vendorName}</p>}
@@ -1163,7 +1171,7 @@ function GateStaffTab({
             const name = profile?.full_name ?? s.staff_id;
             return (
               <div key={s.staff_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 flex items-center gap-4">
-                <Avatar name={name} />
+                <Avatar name={name} photoUrl={profile?.photo_url} />
                 <div className="flex-1">
                   <p className="font-semibold text-white text-sm">{name}</p>
                 </div>
@@ -1339,7 +1347,7 @@ function DocsTab({
                       const approval = staffApprovalMap[s.staff_id];
                       return (
                         <div key={s.staff_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 flex items-center gap-4">
-                          <Avatar name={name} />
+                          <Avatar name={name} photoUrl={profile?.photo_url} />
                           <div className="flex-1">
                             <p className="text-sm font-semibold text-white">{name}</p>
                             <p className="text-xs text-zinc-500 mt-0.5">{ackCount} / {docs.length} acknowledged</p>
@@ -2462,7 +2470,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
       if (staffIds.length > 0) {
         const { data: sp } = await supabase
           .from("staff_profiles")
-          .select("user_id, full_name")
+          .select("user_id, full_name, photo_url")
           .in("user_id", staffIds);
         const spMap: Record<string, StaffProfile> = {};
         for (const p of (sp ?? []) as StaffProfile[]) spMap[p.user_id] = p;
