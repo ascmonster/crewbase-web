@@ -245,6 +245,9 @@ export default function VendorEventDetailPage({ params }: { params: Promise<{ id
         if (method === "refund" || method === "refunded") return false;
         return (t.net_amount_cents ?? t.amount_cents ?? 0) >= 0;
       });
+      // Sort newest-first by the displayed date (square_created_at, else fetched_at)
+      const txDate = (t: TxRow) => new Date(t.square_created_at ?? t.fetched_at ?? 0).getTime();
+      rows.sort((a, b) => txDate(b) - txDate(a));
       setTxRows(rows);
       setTxLoaded(true);
       setTxLoading(false);

@@ -141,6 +141,11 @@ serve(async (req) => {
           (s: number, f: any) => s + (f.amount_money?.amount ?? 0),
           0,
         )
+        console.log('[sync] payment method fields', {
+          source_type: p.source_type,
+          payment_method_type: p.payment_method_type,
+          entry_method: p.card_details?.entry_method,
+        })
         return {
           transaction_id:    p.id,
           vendor_id,
@@ -149,6 +154,8 @@ serve(async (req) => {
           amount_cents:      p.amount_money?.amount ?? 0,
           net_amount_cents:  (p.amount_money?.amount ?? 0) - feeTotal,
           payment_method:    p.source_type === 'CASH' ? 'cash' : p.source_type === 'CARD' ? 'card' : p.source_type?.toLowerCase() ?? p.payment_method_type?.toLowerCase() ?? null,
+          card_brand:        p.card_details?.card?.card_brand ?? null,
+          card_last_4:       p.card_details?.card?.last_4 ?? null,
           square_created_at: p.created_at,
         }
       })
