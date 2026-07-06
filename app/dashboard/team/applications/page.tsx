@@ -10,11 +10,15 @@ type JobListing = {
   title: string;
   location: string | null;
   description: string | null;
+  category: string | null;
   start_date: string | null;
   end_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
   pay_rate: number | null;
   positions_available: number | null;
   positions_filled: number | null;
+  requirements: string | null;
   status: string | null;
   event_id: string | null;
   created_at: string;
@@ -33,9 +37,21 @@ type Applicant = {
 
 type EventOption = { id: string; name: string };
 
+const CATEGORY_OPTIONS = ["Bar Staff", "Food Staff", "Event Staff", "Security", "Ticketing", "Cleaning", "Other"];
+
+// requirements is stored as a stringified JSON array of keys
+const REQ_OPTIONS = [
+  { key: "rsa_licence", label: "RSA Licence Required" },
+  { key: "food_handler", label: "Food Handler Certificate Required" },
+];
+
+// Columns on job_posts (the promoter table). Note: no event_id / promoter_id.
+const JOB_POST_SELECT = "id, title, location, description, category, start_date, end_date, start_time, end_time, pay_rate, positions_available, positions_filled, requirements, status, created_at";
+
 function fmtDate(s: string | null) {
   if (!s) return null;
-  return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  // Append T00:00:00 to date-only strings so they parse in local time (avoids UTC off-by-one)
+  return new Date(s.includes("T") ? s : s + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 // ── Post Job modal ─────────────────────────────────────────────────────────
@@ -51,35 +67,45 @@ function PostJobModal({ promoterId, events, onPosted, onClose }: {
     location: "",
     description: "",
     event_id: "",
+    category: "",
     pay_rate: "",
     positions_available: "",
     start_date: "",
     end_date: "",
+    start_time: "",
+    end_time: "",
   });
+  const [reqs, setReqs] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   function set(k: string, v: string) { setForm((p) => ({ ...p, [k]: v })); }
+  function toggleReq(key: string) {
+    setReqs((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.title.trim()) { setErr("Title is required"); return; }
     setSaving(true);
     setErr(null);
-    const { data, error } = await createClient().from("job_listings").insert({
-      promoter_id: promoterId,
+    const { data, error } = await createClient().from("job_posts").insert({
+      vendor_id: promoterId,
       title: form.title.trim(),
       location: form.location.trim() || null,
       description: form.description.trim() || null,
-      event_id: form.event_id || null,
+      category: form.category || null,
       pay_rate: form.pay_rate ? parseFloat(form.pay_rate) : null,
       positions_available: form.positions_available ? parseInt(form.positions_available) : null,
       start_date: form.start_date || null,
       end_date: form.end_date || null,
+      start_time: form.start_time || null,
+      end_time: form.end_time || null,
+      requirements: JSON.stringify(reqs),
       status: "open",
-    }).select("id, title, location, description, start_date, end_date, pay_rate, positions_available, positions_filled, status, event_id, created_at").single();
+    }).select(JOB_POST_SELECT).single();
     if (error) { setErr(error.message); setSaving(false); return; }
-    onPosted({ ...data, applicant_count: 0, pending_count: 0 } as JobListing);
+    onPosted({ ...data, event_id: null, applicant_count: 0, pending_count: 0 } as JobListing);
     onClose();
     setSaving(false);
   }
@@ -115,9 +141,27 @@ function PostJobModal({ promoterId, events, onPosted, onClose }: {
               className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-violet-500 transition-colors" />
           </div>
           <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Category</label>
+            <select value={form.category} onChange={(e) => set("category", e.target.value)}
+              className="rounded-lg border border-white/[0.08] bg-[#141414] px-3.5 py-2.5 text-sm text-white outline-none focus:border-violet-500 transition-colors [color-scheme:dark]">
+              <option value="">Select a category…</option>
+              {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Description</label>
-            <textarea value={form.description} onChange={(e) => set("description", e.target.value)} rows={3} placeholder="Role details, requirements…"
+            <textarea value={form.description} onChange={(e) => set("description", e.target.value)} rows={3} placeholder="Role details…"
               className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-violet-500 transition-colors resize-none" />
+          </div>
+          <div className="flex flex-col gap-2">
+            <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Requirements</label>
+            {REQ_OPTIONS.map((r) => (
+              <label key={r.key} className="flex items-center gap-2.5 cursor-pointer">
+                <input type="checkbox" checked={reqs.includes(r.key)} onChange={() => toggleReq(r.key)}
+                  className="w-4 h-4 rounded border-white/[0.2] bg-white/[0.04] text-violet-500 focus:ring-violet-500" />
+                <span className="text-sm text-zinc-300">{r.label}</span>
+              </label>
+            ))}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
@@ -141,6 +185,18 @@ function PostJobModal({ promoterId, events, onPosted, onClose }: {
               <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">End Date</label>
               <input type="date" value={form.end_date} onChange={(e) => set("end_date", e.target.value)}
                 className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white outline-none focus:border-violet-500 transition-colors" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Start Time</label>
+              <input type="time" value={form.start_time} onChange={(e) => set("start_time", e.target.value)}
+                className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white outline-none focus:border-violet-500 transition-colors [color-scheme:dark]" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">End Time</label>
+              <input type="time" value={form.end_time} onChange={(e) => set("end_time", e.target.value)}
+                className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white outline-none focus:border-violet-500 transition-colors [color-scheme:dark]" />
             </div>
           </div>
           {err && <p className="text-xs text-red-400">{err}</p>}
@@ -270,7 +326,7 @@ export default function ApplicationsPage() {
       const supabase = createClient();
 
       const [{ data: jobData }, { data: eventData }] = await Promise.all([
-        supabase.from("job_listings").select("id, title, location, description, start_date, end_date, pay_rate, positions_available, positions_filled, status, event_id, created_at").eq("promoter_id", user!.id).order("created_at", { ascending: false }),
+        supabase.from("job_posts").select(JOB_POST_SELECT).eq("vendor_id", user!.id).order("created_at", { ascending: false }),
         supabase.from("events").select("id, name").eq("promoter_id", user!.id).order("start_date", { ascending: false }),
       ]);
 
@@ -299,7 +355,7 @@ export default function ApplicationsPage() {
 
   async function closeJob(id: string) {
     setClosing(id);
-    await createClient().from("job_listings").update({ status: "closed" }).eq("id", id);
+    await createClient().from("job_posts").update({ status: "closed" }).eq("id", id);
     setJobs((prev) => prev.map((j) => j.id === id ? { ...j, status: "closed" } : j));
     setClosing(null);
   }

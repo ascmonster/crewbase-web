@@ -20,6 +20,7 @@ type JobRow = {
   hourly_rate: number | null;
   spots_available: number | null;
   requirements: string | null;
+  category: string | null;
   status: string;
   applicant_count: number;
   pending_count: number;
@@ -38,7 +39,27 @@ type ApplicantRow = {
 
 type Tab = "postings" | "applicants";
 
-const JOB_SELECT = "id, title, body, location, event_name, date, start_time, end_time, hourly_rate, spots_available, requirements, status";
+const JOB_SELECT = "id, title, body, location, event_name, date, start_time, end_time, hourly_rate, spots_available, requirements, category, status";
+
+const CATEGORY_OPTIONS = ["Bar Staff", "Food Staff", "Event Staff", "Security", "Ticketing", "Cleaning", "Other"];
+
+// requirements is stored as a stringified JSON array of keys
+const REQ_OPTIONS = [
+  { key: "rsa_licence", label: "RSA Licence Required" },
+  { key: "food_handler", label: "Food Handler Certificate Required" },
+];
+const REQ_LABELS: Record<string, string> = Object.fromEntries(REQ_OPTIONS.map((r) => [r.key, r.label]));
+
+// Parse the stored requirements value into readable pill labels.
+// Handles JSON arrays (mobile / new format) and legacy free text.
+function parseRequirements(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) return arr.map((x) => REQ_LABELS[String(x)] ?? String(x)).filter(Boolean);
+  } catch { /* not JSON — treat as free text below */ }
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -126,6 +147,7 @@ function PostJobModal({ vendorId, onClose, onPosted }: {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [location, setLocation] = useState("");
+  const [category, setCategory] = useState("");
   const [date, setDate] = useState("");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
@@ -154,6 +176,7 @@ function PostJobModal({ vendorId, onClose, onPosted }: {
         hourly_rate: hourlyRate ? parseFloat(hourlyRate) : null,
         spots_available: spots ? parseInt(spots, 10) : null,
         requirements: requirements.trim() || null,
+        category: category || null,
         status: "open",
       })
       .select(JOB_SELECT)
@@ -188,6 +211,14 @@ function PostJobModal({ vendorId, onClose, onPosted }: {
           <Field label="Location">
             <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Venue / area"
               className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-[#FF6B35] transition-colors" />
+          </Field>
+
+          <Field label="Category">
+            <select value={category} onChange={(e) => setCategory(e.target.value)}
+              className="rounded-lg border border-white/[0.08] bg-[#141414] px-3.5 py-2.5 text-sm text-white outline-none focus:border-[#FF6B35] transition-colors [color-scheme:dark]">
+              <option value="">Select a category…</option>
+              {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
           </Field>
 
           <Field label="Date">
@@ -431,12 +462,19 @@ export default function VendorJobsPage() {
             ) : (
             <div className="flex flex-col gap-3">
             {visibleJobs.map((j) => {
-              const timeRange = [fmtTime(j.start_time), fmtTime(j.end_time)].filter(Boolean).join(" – ");
+              const startLabel = fmtTime(j.start_time);
+              const endLabel = fmtTime(j.end_time);
+              const reqPills = parseRequirements(j.requirements);
               return (
                 <div key={j.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] hover:border-[#FF6B35]/30 transition-colors">
                   <button onClick={() => openApplicantsFor(j.id)} className="w-full text-left px-4 py-4">
                     <div className="flex items-start justify-between gap-3 mb-1.5">
-                      <p className="text-sm font-semibold text-white">{j.title}</p>
+                      <div className="flex items-center gap-2 flex-wrap min-w-0">
+                        <p className="text-sm font-semibold text-white">{j.title}</p>
+                        {j.category && (
+                          <span className="rounded-full bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold text-indigo-300">{j.category}</span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <span className="rounded-full bg-[#FF6B35]/10 px-2 py-0.5 text-xs font-semibold text-[#FF6B35]">
                           {j.applicant_count} applicant{j.applicant_count !== 1 ? "s" : ""}
@@ -449,13 +487,31 @@ export default function VendorJobsPage() {
                     {j.body && (
                       <p className="text-xs text-zinc-500 line-clamp-2 mb-2 whitespace-pre-line">{j.body}</p>
                     )}
+
+                    {/* Shift block */}
+                    {(startLabel || endLabel) && (
+                      <div className="inline-flex items-center gap-2 rounded-lg bg-white/[0.03] border border-white/[0.06] px-3 py-1.5 mb-2">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FF6B35" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        <span className="text-xs font-medium text-zinc-300">{startLabel ?? "—"} → {endLabel ?? "—"}</span>
+                      </div>
+                    )}
+
+                    {/* Requirement pills */}
+                    {reqPills.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mb-2">
+                        {reqPills.map((r, i) => (
+                          <span key={i} className="rounded-full bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-[10px] font-medium text-amber-400">{r}</span>
+                        ))}
+                      </div>
+                    )}
+
                     <div className="flex items-center gap-3 text-xs text-zinc-500 flex-wrap">
                       <span className="flex items-center gap-1.5 text-[#FF6B35] font-medium">
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
                         {j.applicant_count} applicant{j.applicant_count !== 1 ? "s" : ""}
                       </span>
                       {j.pending_count > 0 && <span className="text-amber-400">{j.pending_count} pending</span>}
-                      {j.date && <span>· {fmtDate(j.date)}{timeRange ? ` · ${timeRange}` : ""}</span>}
+                      {j.date && <span>· {fmtDate(j.date)}</span>}
                       {j.hourly_rate != null && <span>· ${j.hourly_rate}/hr</span>}
                       {j.spots_available != null && <span>· {j.spots_available} spot{j.spots_available !== 1 ? "s" : ""}</span>}
                     </div>
