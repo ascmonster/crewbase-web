@@ -20,7 +20,6 @@ type JobListing = {
   positions_filled: number | null;
   requirements: string | null;
   status: string | null;
-  event_id: string | null;
   created_at: string;
   applicant_count: number;
   pending_count: number;
@@ -35,8 +34,6 @@ type Applicant = {
   full_name: string;
 };
 
-type EventOption = { id: string; name: string };
-
 const CATEGORY_OPTIONS = ["Bar Staff", "Food Staff", "Event Staff", "Security", "Ticketing", "Cleaning", "Other"];
 
 // requirements is stored as a stringified JSON array of keys
@@ -44,6 +41,17 @@ const REQ_OPTIONS = [
   { key: "rsa_licence", label: "RSA Licence Required" },
   { key: "food_handler", label: "Food Handler Certificate Required" },
 ];
+const REQ_LABELS: Record<string, string> = Object.fromEntries(REQ_OPTIONS.map((r) => [r.key, r.label]));
+
+// Parse stored requirements into readable pill labels (JSON array or legacy free text).
+function parseRequirements(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) return arr.map((x) => REQ_LABELS[String(x)] ?? String(x)).filter(Boolean);
+  } catch { /* not JSON — treat as free text below */ }
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
 
 // Columns on job_posts (the promoter table). Note: no event_id / promoter_id.
 const JOB_POST_SELECT = "id, title, location, description, category, start_date, end_date, start_time, end_time, pay_rate, positions_available, positions_filled, requirements, status, created_at";
@@ -54,11 +62,19 @@ function fmtDate(s: string | null) {
   return new Date(s.includes("T") ? s : s + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+function fmtTime(t: string | null) {
+  if (!t) return null;
+  const [h, m] = t.split(":");
+  const hour = parseInt(h, 10);
+  const period = hour >= 12 ? "PM" : "AM";
+  const h12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${h12}:${m ?? "00"} ${period}`;
+}
+
 // ── Post Job modal ─────────────────────────────────────────────────────────
 
-function PostJobModal({ promoterId, events, onPosted, onClose }: {
+function PostJobModal({ promoterId, onPosted, onClose }: {
   promoterId: string;
-  events: EventOption[];
   onPosted: (job: JobListing) => void;
   onClose: () => void;
 }) {
@@ -66,7 +82,6 @@ function PostJobModal({ promoterId, events, onPosted, onClose }: {
     title: "",
     location: "",
     description: "",
-    event_id: "",
     category: "",
     pay_rate: "",
     positions_available: "",
@@ -105,7 +120,7 @@ function PostJobModal({ promoterId, events, onPosted, onClose }: {
       status: "open",
     }).select(JOB_POST_SELECT).single();
     if (error) { setErr(error.message); setSaving(false); return; }
-    onPosted({ ...data, event_id: null, applicant_count: 0, pending_count: 0 } as JobListing);
+    onPosted({ ...data, applicant_count: 0, pending_count: 0 } as JobListing);
     onClose();
     setSaving(false);
   }
@@ -125,16 +140,6 @@ function PostJobModal({ promoterId, events, onPosted, onClose }: {
             <input value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. Bar Staff"
               className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-violet-500 transition-colors" />
           </div>
-          {events.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Event (optional)</label>
-              <select value={form.event_id} onChange={(e) => set("event_id", e.target.value)}
-                className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-zinc-300 outline-none focus:border-violet-500 transition-colors">
-                <option value="">No specific event</option>
-                {events.map((ev) => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
-              </select>
-            </div>
-          )}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Location</label>
             <input value={form.location} onChange={(e) => set("location", e.target.value)} placeholder="e.g. Melbourne CBD"
@@ -314,7 +319,6 @@ function ViewApplicantsModal({ job, onClose, onCountChange }: {
 export default function ApplicationsPage() {
   const { user, loading: authLoading } = useRequireAuth();
   const [jobs, setJobs] = useState<JobListing[]>([]);
-  const [events, setEvents] = useState<EventOption[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
   const [showPostJob, setShowPostJob] = useState(false);
   const [viewJob, setViewJob] = useState<JobListing | null>(null);
@@ -325,12 +329,11 @@ export default function ApplicationsPage() {
     async function load() {
       const supabase = createClient();
 
-      const [{ data: jobData }, { data: eventData }] = await Promise.all([
-        supabase.from("job_posts").select(JOB_POST_SELECT).eq("vendor_id", user!.id).order("created_at", { ascending: false }),
-        supabase.from("events").select("id, name").eq("promoter_id", user!.id).order("start_date", { ascending: false }),
-      ]);
-
-      setEvents((eventData as EventOption[]) ?? []);
+      const { data: jobData } = await supabase
+        .from("job_posts")
+        .select(JOB_POST_SELECT)
+        .eq("vendor_id", user!.id)
+        .order("created_at", { ascending: false });
 
       const rows = (jobData as Omit<JobListing, "applicant_count" | "pending_count">[]) ?? [];
       if (rows.length > 0) {
@@ -377,7 +380,6 @@ export default function ApplicationsPage() {
       {showPostJob && user && (
         <PostJobModal
           promoterId={user.id}
-          events={events}
           onPosted={(job) => setJobs((prev) => [job, ...prev])}
           onClose={() => setShowPostJob(false)}
         />
@@ -425,7 +427,12 @@ export default function ApplicationsPage() {
               <div key={j.id} className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-5 py-4">
                 <div className="flex items-start justify-between gap-3 mb-2">
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-white text-sm">{j.title}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-semibold text-white text-sm">{j.title}</p>
+                      {j.category && (
+                        <span className="rounded-full bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold text-indigo-300">{j.category}</span>
+                      )}
+                    </div>
                     <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-1">
                       {j.location && <span className="text-xs text-zinc-500">{j.location}</span>}
                       {j.start_date && <span className="text-xs text-zinc-600">· {fmtDate(j.start_date)}</span>}
@@ -446,6 +453,23 @@ export default function ApplicationsPage() {
                     )}
                   </div>
                 </div>
+
+                {/* Shift block */}
+                {(fmtTime(j.start_time) || fmtTime(j.end_time)) && (
+                  <div className="inline-flex items-center gap-2 rounded-lg bg-white/[0.03] border border-white/[0.06] px-3 py-1.5 mb-2">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span className="text-xs font-medium text-zinc-300">{fmtTime(j.start_time) ?? "—"} → {fmtTime(j.end_time) ?? "—"}</span>
+                  </div>
+                )}
+
+                {/* Requirement pills */}
+                {parseRequirements(j.requirements).length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-1">
+                    {parseRequirements(j.requirements).map((r, i) => (
+                      <span key={i} className="rounded-full bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-[10px] font-medium text-amber-400">{r}</span>
+                    ))}
+                  </div>
+                )}
 
                 <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/[0.04]">
                   <div className="flex items-center gap-3">
