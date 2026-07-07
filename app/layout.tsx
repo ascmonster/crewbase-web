@@ -16,8 +16,9 @@ export const metadata: Metadata = {
   title: "Crewbase",
   description: "Crewbase Promoter Portal",
   icons: {
-    icon: "/logo-icon.png",
-    apple: "/logo-icon.png",
+    icon: "/icon.png",
+    shortcut: "/favicon.ico",
+    apple: "/icon.png",
   },
 };
 
