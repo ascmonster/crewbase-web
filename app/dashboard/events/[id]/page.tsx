@@ -1764,7 +1764,8 @@ type TxRow = {
   transaction_id: string;
   vendor_id: string;
   amount_cents: number;
-  app_fee_cents: number | null;
+  promoter_cut_cents: number | null;
+  vendor_cut_cents: number | null;
   net_amount_cents: number | null;
   square_created_at: string | null;
   fetched_at: string | null;
@@ -1848,7 +1849,7 @@ function SplitsTab({ eventId, paymentMode, generatingReport, reportError, onDown
         // 2. Transaction totals per vendor + full rows for breakdown table
         const { data: txData } = await supabase
           .from("square_transactions")
-          .select("transaction_id, vendor_id, amount_cents, app_fee_cents, net_amount_cents, square_created_at, fetched_at, payment_method")
+          .select("transaction_id, vendor_id, amount_cents, promoter_cut_cents, vendor_cut_cents, net_amount_cents, square_created_at, fetched_at, payment_method")
           .eq("event_id", eventId)
           .order("square_created_at", { ascending: false });
         const totals: Record<string, number> = {};
@@ -2170,8 +2171,8 @@ function SplitsTab({ eventId, paymentMode, generatingReport, reportError, onDown
                           const vendor = vendors.find(v => v.vendor_id === tx.vendor_id);
                           const vendorName = vendor?.business_name ?? tx.vendor_id;
                           const category = vendor?.category ?? "—";
-                          const appFee = tx.app_fee_cents ?? 0;
-                          const vendorCut = tx.amount_cents - appFee;
+                          const promoterCut = tx.promoter_cut_cents ?? 0;
+                          const vendorCut = tx.vendor_cut_cents ?? 0;
                           const dt = tx.square_created_at ?? tx.fetched_at ? new Date((tx.square_created_at ?? tx.fetched_at)!) : null;
                           const dateStr = dt
                             ? dt.toLocaleDateString("en-AU", { day: "2-digit", month: "short" }) + " " +
@@ -2184,7 +2185,7 @@ function SplitsTab({ eventId, paymentMode, generatingReport, reportError, onDown
                               <td className="px-4 py-2.5 text-zinc-500">{category}</td>
                               <td className="px-4 py-2.5 text-right text-white">{fmtD(tx.amount_cents)}</td>
                               <td className="px-4 py-2.5 text-right text-zinc-300">{fmtD(vendorCut)}</td>
-                              <td className="px-4 py-2.5 text-right text-zinc-300">{fmtD(appFee)}</td>
+                              <td className="px-4 py-2.5 text-right text-zinc-300">{fmtD(promoterCut)}</td>
                             </tr>
                           );
                         })}
@@ -2196,10 +2197,10 @@ function SplitsTab({ eventId, paymentMode, generatingReport, reportError, onDown
                             {fmtD(txRows.reduce((s, t) => s + t.amount_cents, 0))}
                           </td>
                           <td className="px-4 py-3 text-right text-zinc-300">
-                            {fmtD(txRows.reduce((s, t) => s + (t.amount_cents - (t.app_fee_cents ?? 0)), 0))}
+                            {fmtD(txRows.reduce((s, t) => s + (t.vendor_cut_cents ?? 0), 0))}
                           </td>
                           <td className="px-4 py-3 text-right text-zinc-300">
-                            {fmtD(txRows.reduce((s, t) => s + (t.app_fee_cents ?? 0), 0))}
+                            {fmtD(txRows.reduce((s, t) => s + (t.promoter_cut_cents ?? 0), 0))}
                           </td>
                         </tr>
                       </tfoot>
@@ -2232,11 +2233,11 @@ function SplitsTab({ eventId, paymentMode, generatingReport, reportError, onDown
           {/* SECTION 3 — CASH SETTLEMENT */}
           {(() => {
             const cashTxs = txRows.filter(tx => tx.payment_method?.toLowerCase() === "cash" && tx.amount_cents > 0);
-            const cashByVendor: Record<string, { amount_cents: number; app_fee_cents: number }> = {};
+            const cashByVendor: Record<string, { amount_cents: number; promoter_cut_cents: number }> = {};
             for (const tx of cashTxs) {
-              if (!cashByVendor[tx.vendor_id]) cashByVendor[tx.vendor_id] = { amount_cents: 0, app_fee_cents: 0 };
+              if (!cashByVendor[tx.vendor_id]) cashByVendor[tx.vendor_id] = { amount_cents: 0, promoter_cut_cents: 0 };
               cashByVendor[tx.vendor_id].amount_cents  += tx.amount_cents;
-              cashByVendor[tx.vendor_id].app_fee_cents += tx.app_fee_cents ?? 0;
+              cashByVendor[tx.vendor_id].promoter_cut_cents += tx.promoter_cut_cents ?? 0;
             }
             const cashVendorIds = Object.keys(cashByVendor);
             return (
@@ -2254,7 +2255,7 @@ function SplitsTab({ eventId, paymentMode, generatingReport, reportError, onDown
                     {cashVendorIds.map((vid) => {
                       const vendor = vendors.find(v => v.vendor_id === vid);
                       const vendorName = vendor?.business_name ?? vid;
-                      const { amount_cents, app_fee_cents } = cashByVendor[vid];
+                      const { amount_cents, promoter_cut_cents } = cashByVendor[vid];
                       return (
                         <div key={vid} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 flex items-center justify-between gap-3">
                           <div className="flex flex-col gap-0.5 min-w-0">
@@ -2264,7 +2265,7 @@ function SplitsTab({ eventId, paymentMode, generatingReport, reportError, onDown
                           <div className="flex items-center gap-3 shrink-0">
                             <div className="text-right">
                               <p className="text-xs text-zinc-500">Promoter cut owed</p>
-                              <p className="text-sm font-semibold text-white">{fmtD(app_fee_cents)}</p>
+                              <p className="text-sm font-semibold text-white">{fmtD(promoter_cut_cents)}</p>
                             </div>
                             <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold text-amber-400 whitespace-nowrap">
                               Pending Collection
