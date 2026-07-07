@@ -16,8 +16,12 @@ export const metadata: Metadata = {
   title: "Crewbase",
   description: "Crewbase Promoter Portal",
   icons: {
-    icon: "/icon.png",
-    apple: "/icon.png",
+    icon: [
+      { url: "/icon.png", type: "image/png" },
+    ],
+    apple: [
+      { url: "/icon.png", type: "image/png" },
+    ],
   },
 };
 
@@ -31,9 +35,6 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <head>
-        <link rel="icon" type="image/png" href="/icon.png" />
-      </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
