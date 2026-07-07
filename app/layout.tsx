@@ -19,11 +19,6 @@ export const metadata: Metadata = {
     icon: "/icon.png",
     apple: "/icon.png",
   },
-  other: {
-    rel: "icon",
-    url: "/icon.png",
-    type: "image/png",
-  },
 };
 
 export default function RootLayout({
@@ -36,6 +31,9 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        <link rel="icon" type="image/png" href="/icon.png" />
+      </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
