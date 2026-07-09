@@ -30,6 +30,7 @@ type VendorProfile = {
   user_id: string; // auth uid = event_vendors.vendor_id
   business_name: string;
   username: string | null;
+  phone_verified?: boolean | null;
 };
 
 type EventVendorRow = {
@@ -52,11 +53,14 @@ type StaffProfile = {
   user_id: string; // auth uid = event_staff.staff_id
   full_name: string;
   photo_url?: string | null;
+  is_verified?: boolean | null;
+  phone_verified?: boolean | null;
 };
 
 type CheckinRow = {
   user_id: string;
   checked_in_at: string | null;
+  checked_out_at: string | null;
   status: string;
 };
 
@@ -879,6 +883,11 @@ function VendorsTab({
                   <div className="flex flex-col gap-1.5">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold text-white text-sm">{name}</span>
+                      {v.profile?.phone_verified && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-blue-900/40 text-blue-400">
+                          📞 Phone ✓
+                        </span>
+                      )}
                       {v.category ? (
                         <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-xs text-zinc-400">{v.category}</span>
                       ) : (
@@ -1075,7 +1084,19 @@ function StaffTab({
           <div key={s.staff_id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4 flex items-center gap-4">
             <Avatar name={name} photoUrl={profile?.photo_url} />
             <div className="flex-1 min-w-0">
-              <p className="font-semibold text-white text-sm">{name}</p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="font-semibold text-white text-sm">{name}</p>
+                {profile?.is_verified && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-green-900/40 text-green-400">
+                    ✓ ID Verified
+                  </span>
+                )}
+                {profile?.phone_verified && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-blue-900/40 text-blue-400">
+                    📞 Phone ✓
+                  </span>
+                )}
+              </div>
               {vendorName && <p className="text-xs text-zinc-500 mt-0.5">via {vendorName}</p>}
             </div>
             <button
@@ -1118,7 +1139,11 @@ function CheckInsTab({ checkins, userNames }: { checkins: CheckinRow[]; userName
               <p className="font-semibold text-white text-sm">{name}</p>
               {c.checked_in_at && <p className="text-xs text-zinc-500 mt-0.5">{timeAgo(c.checked_in_at)}</p>}
             </div>
-            <span className="text-xs font-semibold text-emerald-400">✓ CHECKED IN</span>
+            {c.checked_out_at ? (
+              <span className="text-xs font-semibold text-zinc-400">↩ Checked Out</span>
+            ) : (
+              <span className="text-xs font-semibold text-emerald-400">✓ Inside</span>
+            )}
           </div>
         );
       })}
@@ -2458,7 +2483,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
       if (vendorUserIds.length > 0) {
         const { data: vp } = await supabase
           .from("vendor_profiles")
-          .select("id, user_id, business_name, username")
+          .select("id, user_id, business_name, username, phone_verified")
           .in("user_id", vendorUserIds);
         for (const p of (vp ?? []) as VendorProfile[]) {
           profileMap[p.user_id] = p;
@@ -2471,7 +2496,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
       if (staffIds.length > 0) {
         const { data: sp } = await supabase
           .from("staff_profiles")
-          .select("user_id, full_name, photo_url")
+          .select("user_id, full_name, photo_url, is_verified, phone_verified")
           .in("user_id", staffIds);
         const spMap: Record<string, StaffProfile> = {};
         for (const p of (sp ?? []) as StaffProfile[]) spMap[p.user_id] = p;
@@ -2514,7 +2539,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
       // 7. Check-ins
       const { data: ciData } = await supabase
         .from("event_checkins")
-        .select("user_id, checked_in_at, status")
+        .select("user_id, checked_in_at, checked_out_at, status")
         .eq("event_id", id)
         .order("checked_in_at", { ascending: false });
 
