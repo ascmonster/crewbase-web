@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRequireVendorAuth } from "@/lib/useRequireVendorAuth";
 import { createClient } from "@/lib/supabase";
 
@@ -25,6 +25,14 @@ type Truck = {
   square_location_name: string | null;
   square_terminal_device_id: string | null;
   square_terminal_name: string | null;
+};
+
+type VendorTerminal = {
+  id: string;
+  truck_id: string;
+  device_id: string;
+  device_name: string | null;
+  created_at: string;
 };
 
 type VendorSquare = {
@@ -274,102 +282,28 @@ function TruckModal({ userId, square, existing, onClose, onSaved, onDeleted }: {
 }
 
 // ── Pair Terminal modal ────────────────────────────────────────────────────
+// Pairing itself happens in the Crewbase mobile app (which writes to
+// vendor_terminals). On web this modal is informational only.
 
-function PairTerminalModal({ truck, onClose, onPaired }: {
+function PairTerminalModal({ truck, onClose }: {
   truck: Truck;
   onClose: () => void;
-  onPaired: (deviceId: string, deviceName: string) => void;
 }) {
-  const [code, setCode] = useState<string | null>(null);
-  const [status, setStatus] = useState<"creating" | "waiting" | "paired" | "error">("creating");
-  const [err, setErr] = useState<string | null>(null);
-  const timers = useRef<{ interval?: ReturnType<typeof setInterval>; timeout?: ReturnType<typeof setTimeout> }>({});
-
-  const cleanup = useCallback(() => {
-    if (timers.current.interval) clearInterval(timers.current.interval);
-    if (timers.current.timeout) clearTimeout(timers.current.timeout);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function start() {
-      const supabase = createClient();
-      const { data: { session } } = await supabase.auth.getSession();
-      const auth = { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` };
-      const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-      // 1. Create a device code
-      try {
-        const res = await fetch(`${base}/functions/v1/create-device-code`, {
-          method: "POST", headers: auth, body: JSON.stringify({ truck_id: truck.id, name: truck.name }),
-        });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error || "Failed to create device code");
-        const pairingCode = json.code ?? json.device_code ?? json.pair_code;
-        const deviceCodeId = json.device_code_id ?? json.id;
-        if (cancelled) return;
-        setCode(pairingCode ?? "—");
-        setStatus("waiting");
-
-        // 2. Poll get-devices every 5s for up to 2 minutes
-        let elapsed = 0;
-        timers.current.interval = setInterval(async () => {
-          elapsed += 5;
-          try {
-            const dRes = await fetch(`${base}/functions/v1/get-devices`, {
-              method: "POST", headers: auth, body: JSON.stringify({ device_code_id: deviceCodeId }),
-            });
-            const dJson = await dRes.json();
-            const devices = (dJson.devices ?? []) as any[];
-            const match = devices.find((d) => (d.device_code_id === deviceCodeId || d.pairing_code === pairingCode) && (d.device_id || d.id) && (d.status ? d.status === "PAIRED" : true));
-            if (match) {
-              cleanup();
-              const deviceId = match.device_id ?? match.id;
-              const deviceName = match.name ?? match.device_name ?? "Square Terminal";
-              await supabase.from("vendor_trucks").update({ square_terminal_device_id: deviceId, square_terminal_name: deviceName }).eq("id", truck.id);
-              if (!cancelled) { setStatus("paired"); onPaired(deviceId, deviceName); }
-            }
-          } catch { /* keep polling */ }
-          if (elapsed >= 120) { cleanup(); if (!cancelled && status !== "paired") { setStatus("error"); setErr("Timed out waiting for the terminal to pair."); } }
-        }, 5000);
-      } catch (e: any) {
-        if (!cancelled) { setStatus("error"); setErr(e.message || "Something went wrong"); }
-      }
-    }
-    start();
-    return () => { cancelled = true; cleanup(); };
-  }, [truck.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/70">
       <div className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-[#141414] p-6 text-center">
         <div className="flex items-center justify-between mb-5">
-          <h3 className="font-semibold text-white">Pair Terminal</h3>
-          <button onClick={() => { cleanup(); onClose(); }} className="text-zinc-500 hover:text-white transition-colors">
+          <h3 className="font-semibold text-white">Pair Terminal — {truck.name}</h3>
+          <button onClick={onClose} className="text-zinc-500 hover:text-white transition-colors">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
 
-        {status === "paired" ? (
-          <div className="py-6">
-            <p className="text-lg font-semibold text-emerald-400 mb-2">Terminal paired ✓</p>
-            <button onClick={onClose} className="mt-2 rounded-lg bg-[#FF6B35] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#ff7d4d] transition-colors">Done</button>
-          </div>
-        ) : status === "error" ? (
-          <div className="py-6">
-            <p className="text-sm text-red-400 mb-4">{err}</p>
-            <button onClick={onClose} className="rounded-lg border border-white/[0.08] px-5 py-2.5 text-sm text-zinc-400 hover:text-white transition-colors">Close</button>
-          </div>
-        ) : (
-          <div className="py-4">
-            <p className="text-xs text-zinc-500 mb-4">Enter this code on your Square Terminal</p>
-            <p className="text-4xl font-mono font-bold tracking-[0.35em] text-amber-400 mb-4">{status === "creating" ? "····" : code}</p>
-            <div className="flex items-center justify-center gap-2 text-xs text-zinc-500">
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-              Waiting for terminal…
-            </div>
-          </div>
-        )}
+        <div className="py-6">
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-[#FF6B35]/10 flex items-center justify-center mb-4 text-2xl">📟</div>
+          <p className="text-sm text-zinc-300 mb-6">Use the Crewbase mobile app to pair a new terminal.</p>
+          <button onClick={onClose} className="rounded-lg bg-[#FF6B35] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#ff7d4d] transition-colors">Got it</button>
+        </div>
       </div>
     </div>
   );
@@ -377,12 +311,13 @@ function PairTerminalModal({ truck, onClose, onPaired }: {
 
 // ── Truck card ─────────────────────────────────────────────────────────────
 
-function TruckCard({ truck, squareConnected, onEdit, onPair, onDisconnect }: {
+function TruckCard({ truck, squareConnected, terminals, onEdit, onPair, onRemoveTerminal }: {
   truck: Truck;
   squareConnected: boolean;
+  terminals: VendorTerminal[];
   onEdit: () => void;
   onPair: () => void;
-  onDisconnect: () => void;
+  onRemoveTerminal: (terminalId: string) => void;
 }) {
   const locationLinked = !!truck.square_location_id;
   const showTerminal = squareConnected && locationLinked;
@@ -405,18 +340,30 @@ function TruckCard({ truck, squareConnected, onEdit, onPair, onDisconnect }: {
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${locationLinked ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-500/10 text-zinc-400"}`}>
               {locationLinked ? "✓ Location linked" : "Square not linked"}
             </span>
+          </div>
+
+          {/* Terminals */}
+          <div className="mt-2">
+            {terminals.length === 0 ? (
+              <p className="text-xs text-zinc-500">No terminals paired</p>
+            ) : (
+              terminals.map((terminal) => (
+                <div key={terminal.id} className="flex items-center justify-between py-1">
+                  <span className="text-xs text-zinc-300">📟 {terminal.device_name ?? "Terminal"}</span>
+                  <button
+                    onClick={() => onRemoveTerminal(terminal.id)}
+                    className="text-xs text-rose-400 hover:text-rose-300 transition-colors"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))
+            )}
 
             {showTerminal && (
-              truck.square_terminal_device_id ? (
-                <span className="flex items-center gap-2">
-                  <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">✓ {truck.square_terminal_name ?? "Terminal"}</span>
-                  <button onClick={onDisconnect} className="text-[10px] text-zinc-500 hover:text-rose-400 transition-colors">Disconnect</button>
-                </span>
-              ) : (
-                <button onClick={onPair} className="rounded-full bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 text-[10px] font-semibold text-amber-400 hover:bg-amber-500/20 transition-colors">
-                  Pair Terminal
-                </button>
-              )
+              <button onClick={onPair} className="mt-1 rounded-full bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 text-[10px] font-semibold text-amber-400 hover:bg-amber-500/20 transition-colors">
+                Pair Terminal
+              </button>
             )}
           </div>
         </div>
@@ -434,6 +381,7 @@ function TruckCard({ truck, squareConnected, onEdit, onPair, onDisconnect }: {
 export default function VendorTrucksPage() {
   const { user, loading: authLoading } = useRequireVendorAuth();
   const [trucks, setTrucks] = useState<Truck[]>([]);
+  const [terminalsByTruck, setTerminalsByTruck] = useState<Record<string, VendorTerminal[]>>({});
   const [square, setSquare] = useState<VendorSquare | null>(null);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<{ existing: Truck | null } | null>(null);
@@ -446,7 +394,23 @@ export default function VendorTrucksPage() {
       supabase.from("vendor_trucks").select("*").eq("vendor_id", user.id).order("name", { ascending: true }),
       supabase.from("vendor_profiles").select("square_connected, square_access_token, square_merchant_name").eq("user_id", user.id).maybeSingle(),
     ]);
-    setTrucks(((truckRes.data ?? []) as any[]).map(normTruck));
+    const truckList = ((truckRes.data ?? []) as any[]).map(normTruck);
+    setTrucks(truckList);
+
+    // Terminals per truck (multiple terminals supported via vendor_terminals)
+    const terminalsByTruckMap: Record<string, VendorTerminal[]> = {};
+    if (truckList.length > 0) {
+      const { data: terminals } = await supabase
+        .from("vendor_terminals")
+        .select("*")
+        .in("truck_id", truckList.map((t) => t.id));
+      (terminals ?? []).forEach((t: any) => {
+        if (!terminalsByTruckMap[t.truck_id]) terminalsByTruckMap[t.truck_id] = [];
+        terminalsByTruckMap[t.truck_id].push(t);
+      });
+    }
+    setTerminalsByTruck(terminalsByTruckMap);
+
     const p = profRes.data as any;
     setSquare({
       square_connected: p?.square_connected === true,
@@ -458,9 +422,10 @@ export default function VendorTrucksPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  async function disconnectTerminal(truck: Truck) {
-    await createClient().from("vendor_trucks").update({ square_terminal_device_id: null, square_terminal_name: null }).eq("id", truck.id);
-    setTrucks((prev) => prev.map((t) => (t.id === truck.id ? { ...t, square_terminal_device_id: null, square_terminal_name: null } : t)));
+  async function handleRemoveTerminal(terminalId: string) {
+    if (typeof window !== "undefined" && !window.confirm("Remove this terminal?")) return;
+    await createClient().from("vendor_terminals").delete().eq("id", terminalId);
+    load();
   }
 
   return (
@@ -494,9 +459,10 @@ export default function VendorTrucksPage() {
               key={t.id}
               truck={t}
               squareConnected={square?.square_connected ?? false}
+              terminals={terminalsByTruck[t.id] ?? []}
               onEdit={() => setModal({ existing: t })}
               onPair={() => setPairing(t)}
-              onDisconnect={() => disconnectTerminal(t)}
+              onRemoveTerminal={handleRemoveTerminal}
             />
           ))}
         </div>
@@ -517,9 +483,6 @@ export default function VendorTrucksPage() {
         <PairTerminalModal
           truck={pairing}
           onClose={() => setPairing(null)}
-          onPaired={(deviceId, deviceName) => {
-            setTrucks((prev) => prev.map((t) => (t.id === pairing.id ? { ...t, square_terminal_device_id: deviceId, square_terminal_name: deviceName } : t)));
-          }}
         />
       )}
     </div>
