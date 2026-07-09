@@ -121,6 +121,7 @@ export default function VendorSettingsPage() {
   const [onboardingComplete, setOnboardingComplete] = useState(false);
   const [squareConnected, setSquareConnected] = useState(false);
   const [squareMerchantName, setSquareMerchantName] = useState<string | null>(null);
+  const [phoneVerified, setPhoneVerified] = useState(false);
 
   // Subscription
   const [subscription, setSubscription] = useState<Subscription>(null);
@@ -147,7 +148,7 @@ export default function VendorSettingsPage() {
       /* eslint-disable @typescript-eslint/no-explicit-any */
       const { data } = await createClient()
         .from("vendor_profiles")
-        .select("business_name, abn, suburb, state, phone, description, approval_status, logo_url, onboarding_complete, square_connected, square_merchant_name")
+        .select("business_name, abn, suburb, state, phone, description, approval_status, logo_url, onboarding_complete, square_connected, square_merchant_name, is_verified, verification_status, phone_verified")
         .eq("user_id", user!.id)
         .maybeSingle();
       const p = (data ?? {}) as any;
@@ -164,6 +165,7 @@ export default function VendorSettingsPage() {
       setOnboardingComplete(!!p.onboarding_complete);
       setSquareConnected(p.square_connected === true);
       setSquareMerchantName(p.square_merchant_name ?? null);
+      setPhoneVerified(p.phone_verified === true);
       /* eslint-enable @typescript-eslint/no-explicit-any */
       setProfileLoading(false);
     }
@@ -383,6 +385,49 @@ export default function VendorSettingsPage() {
             <button onClick={saveProfile} disabled={saving} className="self-start rounded-lg bg-[#FF6B35] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#ff7d4d] transition-colors disabled:opacity-50">
               {saving ? "Saving…" : "Save Changes"}
             </button>
+
+            {/* Identity Verification */}
+            <div className="bg-[#111] rounded-xl p-6 border border-white/5 mt-2">
+              <h2 className="text-white font-semibold text-lg mb-4">Identity Verification</h2>
+
+              {/* Phone Verification */}
+              <div className="flex items-center justify-between py-3 border-b border-white/5">
+                <div>
+                  <p className="text-white text-sm font-medium">Phone Verification</p>
+                  <p className="text-gray-400 text-xs mt-0.5">Mobile number verified via SMS</p>
+                </div>
+                {phoneVerified ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-900/40 text-blue-400 border border-blue-800">
+                    📞 Verified
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gray-800 text-gray-400">
+                    Not Verified
+                  </span>
+                )}
+              </div>
+
+              {/* Account Approval */}
+              <div className="flex items-center justify-between py-3">
+                <div>
+                  <p className="text-white text-sm font-medium">Account Status</p>
+                  <p className="text-gray-400 text-xs mt-0.5">Reviewed by Crewbase team</p>
+                </div>
+                {approvalStatus === "approved" ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-green-900/40 text-green-400 border border-green-800">
+                    ✓ Approved
+                  </span>
+                ) : approvalStatus === "rejected" ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-900/40 text-red-400 border border-red-800">
+                    ✗ Rejected
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-900/40 text-amber-400 border border-amber-800">
+                    ⏳ Pending
+                  </span>
+                )}
+              </div>
+            </div>
 
             {/* Square Payments */}
             <div className="rounded-2xl bg-white/[0.02] border border-white/[0.06] border-l-4 border-l-[#FF6B35] px-5 py-5 mt-2">
