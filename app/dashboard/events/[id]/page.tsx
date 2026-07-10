@@ -31,6 +31,7 @@ type VendorProfile = {
   business_name: string;
   username: string | null;
   phone_verified?: boolean | null;
+  abn_verified?: boolean | null;
 };
 
 type EventVendorRow = {
@@ -883,6 +884,11 @@ function VendorsTab({
                   <div className="flex flex-col gap-1.5">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold text-white text-sm">{name}</span>
+                      {v.profile?.abn_verified && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-emerald-900/40 text-emerald-400 border border-emerald-800">
+                          ✓ Verified Business
+                        </span>
+                      )}
                       {v.profile?.phone_verified && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-blue-900/40 text-blue-400">
                           📞 Phone ✓
@@ -2483,7 +2489,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
       if (vendorUserIds.length > 0) {
         const { data: vp } = await supabase
           .from("vendor_profiles")
-          .select("id, user_id, business_name, username, phone_verified")
+          .select("id, user_id, business_name, username, phone_verified, abn_verified")
           .in("user_id", vendorUserIds);
         for (const p of (vp ?? []) as VendorProfile[]) {
           profileMap[p.user_id] = p;
