@@ -13,7 +13,7 @@ import { createClient } from "@/lib/supabase";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-type Tab = "staff" | "schedule" | "timesheets";
+type Tab = "staff" | "schedule" | "timesheets" | "invoices" | "payroll";
 
 // ── Shared helpers ─────────────────────────────────────────────────────────
 
@@ -73,6 +73,32 @@ function Skeleton({ count = 4 }: { count?: number }) {
   );
 }
 
+// ── Award / classification / money helpers ─────────────────────────────────
+// NOTE: classification/award/employment_type on staff_vendor_assignments,
+// abn/abn_verified/abn_business_name on staff_profiles, staff_availability, and
+// contractor_invoices are all unverified against the DB — reads are defensive.
+
+const AWARD_OPTIONS = ["Hospitality", "Restaurant", "Fast Food", "Retail", "Events"];
+const EMPLOYMENT_TYPES: [string, string][] = [["casual", "Casual"], ["part_time", "Part-time"], ["full_time", "Full-time"]];
+const AWARD_MULTIPLIERS = { weekday: 1.0, saturday: 1.25, sunday: 1.75, public_holiday: 2.25, late_night: 1.15 };
+
+// Multiplier + penalty label for a shift date/time. Public holidays aren't
+// derivable without a PH calendar, so only weekend + late-night are detected.
+function awardInfo(dateStr: string, startTime?: string | null): { mult: number; label: string | null } {
+  const d = new Date((dateStr || "").includes("T") ? dateStr : dateStr + "T00:00:00");
+  const dow = d.getDay();
+  if (dow === 0) return { mult: AWARD_MULTIPLIERS.sunday, label: "Sunday 1.75×" };
+  if (dow === 6) return { mult: AWARD_MULTIPLIERS.saturday, label: "Saturday 1.25×" };
+  if (startTime) {
+    const h = parseInt(startTime.split(":")[0], 10);
+    if (!isNaN(h) && (h >= 22 || h < 6)) return { mult: AWARD_MULTIPLIERS.late_night, label: "Late night 1.15×" };
+  }
+  return { mult: AWARD_MULTIPLIERS.weekday, label: null };
+}
+function money(n: number) {
+  return `$${(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // MY STAFF TAB
 // ════════════════════════════════════════════════════════════════════════════
@@ -86,6 +112,12 @@ type Member = {
   shift_count: number;
   pin: string | null;
   rates: { weekday: string; weekend: string; public_holiday: string };
+  classification: string; // "employee" | "contractor"
+  award: string | null;
+  employment_type: string | null;
+  abn: string | null;
+  abn_verified: boolean;
+  abn_business_name: string | null;
 };
 type TeamRequest = { id: string; staff_id: string; full_name: string; username: string | null };
 
@@ -216,7 +248,7 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
 
     const [uRes, spRes, ratingRes, pinRes, shiftRes, payRes, reqRes, mgrRes] = await Promise.all([
       staffIds.length ? supabase.from("users").select("id, full_name").in("id", staffIds) : Promise.resolve({ data: [] as any[] }),
-      staffIds.length ? supabase.from("staff_profiles").select("user_id, username").in("user_id", staffIds) : Promise.resolve({ data: [] as any[] }),
+      staffIds.length ? supabase.from("staff_profiles").select("user_id, username, abn, abn_verified, abn_business_name").in("user_id", staffIds) : Promise.resolve({ data: [] as any[] }),
       staffIds.length ? supabase.from("user_ratings_summary").select("user_id, average_stars").in("user_id", staffIds) : Promise.resolve({ data: [] as any[] }),
       supabase.from("vendor_staff_pins").select("staff_id, pin").eq("vendor_id", vendorId),
       supabase.from("shifts").select("staff_id").eq("vendor_id", vendorId).eq("status", "completed"),
@@ -228,7 +260,9 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
     const managerSet = new Set(((mgrRes.data ?? []) as any[]).map((r) => r.staff_id));
 
     const nameMap = Object.fromEntries(((uRes.data ?? []) as any[]).map((u) => [u.id, u.full_name]));
+    const spByUser = Object.fromEntries(((spRes.data ?? []) as any[]).map((p) => [p.user_id, p]));
     const userMap = Object.fromEntries(((spRes.data ?? []) as any[]).map((p) => [p.user_id, p.username]));
+    const svaByStaff = Object.fromEntries(rows.map((r) => [r.staff_id, r]));
     const ratingMap = Object.fromEntries(((ratingRes.data ?? []) as any[]).map((r) => [r.user_id, r.average_stars]));
     const pinMap = Object.fromEntries(((pinRes.data ?? []) as any[]).map((p) => [p.staff_id, p.pin]));
     const shiftCount: Record<string, number> = {};
@@ -249,6 +283,12 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
         weekend: rateMap[r.staff_id]?.weekend != null ? String(rateMap[r.staff_id].weekend) : "",
         public_holiday: rateMap[r.staff_id]?.public_holiday != null ? String(rateMap[r.staff_id].public_holiday) : "",
       },
+      classification: (svaByStaff[r.staff_id]?.classification ?? "employee") as string,
+      award: svaByStaff[r.staff_id]?.award ?? null,
+      employment_type: svaByStaff[r.staff_id]?.employment_type ?? null,
+      abn: spByUser[r.staff_id]?.abn ?? null,
+      abn_verified: spByUser[r.staff_id]?.abn_verified === true,
+      abn_business_name: spByUser[r.staff_id]?.abn_business_name ?? null,
     })));
 
     // Pending requests + names
@@ -317,6 +357,15 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
     setPayEditFor(null);
   }
 
+  async function saveAssignment(staffId: string, patch: Partial<Member>) {
+    const dbPatch: Record<string, any> = {};
+    if ("classification" in patch) dbPatch.classification = patch.classification;
+    if ("award" in patch) dbPatch.award = patch.award;
+    if ("employment_type" in patch) dbPatch.employment_type = patch.employment_type;
+    setMembers((prev) => prev.map((x) => (x.staff_id === staffId ? { ...x, ...patch } : x)));
+    await createClient().from("staff_vendor_assignments").update(dbPatch).eq("vendor_id", vendorId).eq("staff_id", staffId);
+  }
+
   if (loading) return <Skeleton count={4} />;
 
   return (
@@ -358,8 +407,11 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
               <div className="flex items-center gap-4">
                 <Avatar name={m.full_name} colorKey={m.staff_id} />
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-sm font-semibold text-white truncate">{m.full_name}</p>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${m.classification === "contractor" ? "bg-purple-500/15 text-purple-300" : "bg-blue-500/15 text-blue-300"}`}>
+                      {m.classification === "contractor" ? "Contractor" : "Employee"}
+                    </span>
                     {m.is_manager && <span className="rounded-full bg-[#FF6B35]/15 px-2 py-0.5 text-[10px] font-semibold text-[#FF6B35]">MANAGER</span>}
                   </div>
                   <p className="text-xs text-zinc-500">
@@ -391,6 +443,51 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
                   <button onClick={() => setConfirmRemove(m.staff_id)} className="text-zinc-600 hover:text-rose-400 transition-colors" aria-label="Remove">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                   </button>
+                )}
+              </div>
+
+              {/* Classification controls */}
+              <div className="mt-3 rounded-lg border border-white/[0.06] bg-black/20 p-3 flex flex-col gap-3">
+                <div className="flex items-center gap-2">
+                  <label className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Classification</label>
+                  <select
+                    value={m.classification}
+                    onChange={(e) => saveAssignment(m.staff_id, { classification: e.target.value })}
+                    className="rounded-md border border-white/[0.08] bg-[#141414] px-2 py-1 text-xs text-white outline-none focus:border-[#FF6B35] transition-colors [color-scheme:dark]"
+                  >
+                    <option value="employee">Employee</option>
+                    <option value="contractor">Contractor</option>
+                  </select>
+                </div>
+
+                {m.classification === "contractor" ? (
+                  <div className="text-xs text-zinc-400">
+                    ABN: <span className="text-zinc-200 font-medium">{m.abn ?? "Not provided"}</span>
+                    {m.abn_verified && <span className="text-emerald-400 ml-1">✅</span>}
+                    {m.abn_business_name && <span className="text-zinc-500"> · {m.abn_business_name}</span>}
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <label className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Award</label>
+                      <select
+                        value={m.award ?? ""}
+                        onChange={(e) => saveAssignment(m.staff_id, { award: e.target.value || null })}
+                        className="rounded-md border border-white/[0.08] bg-[#141414] px-2 py-1 text-xs text-white outline-none focus:border-[#FF6B35] transition-colors [color-scheme:dark]"
+                      >
+                        <option value="">Select…</option>
+                        {AWARD_OPTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {EMPLOYMENT_TYPES.map(([val, lbl]) => (
+                        <button key={val} onClick={() => saveAssignment(m.staff_id, { employment_type: val })}
+                          className={`rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors ${m.employment_type === val ? "bg-[#FF6B35] text-white" : "border border-white/[0.12] text-zinc-400 hover:text-white"}`}>
+                          {lbl}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
 
@@ -496,8 +593,25 @@ function ShiftModal({ vendorId, staff, trucks, events, existing, defaultDate, on
   const [maxStaff, setMaxStaff] = useState(existing?.max_staff != null ? String(existing.max_staff) : "1");
   const [requirements, setRequirements] = useState(existing?.requirements ?? "");
   const [visibility, setVisibility] = useState(existing?.visibility ?? "team");
+  const [availMsg, setAvailMsg] = useState<{ kind: "warn" | "hint"; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Availability check for the selected staff + date (assigned / event shifts)
+  useEffect(() => {
+    let cancelled = false;
+    if ((shiftType !== "assigned" && shiftType !== "event") || !staffId || !date) { setAvailMsg(null); return; }
+    (async () => {
+      const { data } = await createClient().from("staff_availability").select("status").eq("staff_id", staffId).eq("date", date).maybeSingle();
+      if (cancelled) return;
+      const status = (data as any)?.status;
+      const name = staff.find((s) => s.staff_id === staffId)?.full_name ?? "This staff member";
+      if (status === "unavailable") setAvailMsg({ kind: "warn", text: `⚠️ ${name} is unavailable on this date` });
+      else if (status === "preferred") setAvailMsg({ kind: "hint", text: `✅ This is a preferred date for ${name}` });
+      else setAvailMsg(null);
+    })();
+    return () => { cancelled = true; };
+  }, [shiftType, staffId, date, staff]);
 
   function pickEvent(id: string) {
     setEventId(id);
@@ -691,6 +805,9 @@ function ShiftModal({ vendorId, staff, trucks, events, existing, defaultDate, on
             </>
           )}
 
+          {availMsg && (
+            <p className={`text-xs rounded-lg px-3 py-2 ${availMsg.kind === "warn" ? "bg-rose-500/10 text-rose-400" : "bg-emerald-500/10 text-emerald-400"}`}>{availMsg.text}</p>
+          )}
           {err && <p className="text-xs text-red-400">{err}</p>}
           <div className="flex gap-3">
             <button onClick={onClose} className="flex-1 h-10 rounded-lg border border-white/[0.08] text-sm text-zinc-400 hover:text-white transition-colors">Cancel</button>
@@ -708,6 +825,7 @@ function ScheduleTab({ vendorId }: { vendorId: string }) {
   const [monthAnchor, setMonthAnchor] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1); });
 
   const [schedules, setSchedules] = useState<Schedule[]>([]); // week OR month range
+  const [availByDate, setAvailByDate] = useState<Record<string, { unavailable: boolean; preferred: boolean }>>({});
   const [openShifts, setOpenShifts] = useState<Schedule[]>([]);
   const [claimsBySchedule, setClaimsBySchedule] = useState<Record<string, ShiftClaim[]>>({});
   const [staff, setStaff] = useState<StaffOption[]>([]);
@@ -780,6 +898,24 @@ function ScheduleTab({ vendorId }: { vendorId: string }) {
       const { data } = await supabase.from("schedules").select(SCHEDULE_SELECT)
         .eq("vendor_id", vendorId).gte("shift_date", toISODate(start)).lte("shift_date", toISODate(end));
       setSchedules(((data ?? []) as any[]).filter((r) => r.status !== "cancelled") as Schedule[]);
+
+      // Availability markers (Week view only)
+      if (scheduleView === "Week") {
+        const { data: svaIds2 } = await supabase.from("staff_vendor_assignments").select("staff_id").eq("vendor_id", vendorId);
+        const teamIds = [...new Set(((svaIds2 ?? []) as any[]).map((r) => r.staff_id))];
+        const avail: Record<string, { unavailable: boolean; preferred: boolean }> = {};
+        if (teamIds.length) {
+          const { data: av } = await supabase.from("staff_availability").select("staff_id, date, status")
+            .in("staff_id", teamIds).gte("date", toISODate(start)).lte("date", toISODate(end));
+          for (const a of (av ?? []) as any[]) {
+            const key = (a.date || "").slice(0, 10);
+            if (!avail[key]) avail[key] = { unavailable: false, preferred: false };
+            if (a.status === "unavailable") avail[key].unavailable = true;
+            if (a.status === "preferred") avail[key].preferred = true;
+          }
+        }
+        setAvailByDate(avail);
+      }
     }
     setLoading(false);
   }, [vendorId, scheduleView, weekStart, monthAnchor]);
@@ -848,7 +984,11 @@ function ScheduleTab({ vendorId }: { vendorId: string }) {
   });
   const label = `${weekStart.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short" })} – ${weekEnd.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short" })}`;
 
-  const shiftLine = (s: Schedule) => (
+  const shiftLine = (s: Schedule) => {
+    const award = awardInfo(s.shift_date, s.start_time);
+    const hrs = hoursBetween(s.start_time, s.end_time);
+    const est = s.pay_rate != null ? hrs * s.pay_rate * award.mult : null;
+    return (
     <div key={s.id} className="rounded-lg bg-white/[0.02] border border-white/[0.06] border-l-2 border-l-[#FF6B35] px-3 py-2.5 flex items-center gap-3">
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-white truncate">
@@ -858,13 +998,20 @@ function ScheduleTab({ vendorId }: { vendorId: string }) {
         <p className="text-xs text-zinc-500">
           {fmtTime(s.start_time)} – {fmtTime(s.end_time)}{s.role ? ` · ${s.role}` : ""}{s.truck?.name ? ` · ${s.truck.name}` : ""}
         </p>
+        {(est != null || award.label) && (
+          <p className="text-xs mt-0.5">
+            {est != null && <span className="text-[#FF6B35] font-medium">~{money(est)}</span>}
+            {award.label && <span className="text-amber-400 ml-1.5">{award.label}</span>}
+          </p>
+        )}
       </div>
       <button onClick={() => setModal({ existing: s, date: s.shift_date })} className="text-xs text-zinc-500 hover:text-white transition-colors">Edit</button>
       <button onClick={() => cancelShift(s.id)} className="text-zinc-600 hover:text-rose-400 transition-colors" aria-label="Cancel shift">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
-  );
+    );
+  };
 
   // Month grid (6 weeks starting Monday of the month)
   const gridStart = mondayOf(monthAnchor);
@@ -915,10 +1062,15 @@ function ScheduleTab({ vendorId }: { vendorId: string }) {
               {days.map((d) => {
                 const iso = toISODate(d);
                 const dayShifts = schedules.filter((s) => s.shift_date === iso);
+                const avail = availByDate[iso];
                 return (
                   <div key={iso}>
                     <div className="flex items-center justify-between mb-2">
-                      <p className="text-xs font-semibold text-zinc-400">{d.toLocaleDateString("en-US", { weekday: "long" })} <span className="text-zinc-600">{d.toLocaleDateString("en-US", { day: "numeric", month: "short" })}</span></p>
+                      <p className="text-xs font-semibold text-zinc-400 flex items-center gap-1.5">
+                        {d.toLocaleDateString("en-US", { weekday: "long" })} <span className="text-zinc-600">{d.toLocaleDateString("en-US", { day: "numeric", month: "short" })}</span>
+                        {avail?.preferred && <span className="w-2 h-2 rounded-full bg-emerald-400" title="Preferred by a team member" />}
+                        {avail?.unavailable && <span className="w-2 h-2 rounded-full bg-rose-500" title="A team member is unavailable" />}
+                      </p>
                       <button onClick={() => setModal({ existing: null, date: iso })} className="w-6 h-6 rounded-md bg-[#FF6B35]/15 text-[#FF6B35] flex items-center justify-center hover:bg-[#FF6B35]/25 transition-colors">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                       </button>
@@ -1152,6 +1304,350 @@ function TimesheetsTab({ vendorId }: { vendorId: string }) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// INVOICES TAB (contractor invoices)
+// ════════════════════════════════════════════════════════════════════════════
+
+type Invoice = {
+  id: string;
+  staff_id: string;
+  invoice_number: string | null;
+  invoice_date: string | null;
+  hours: number | null;
+  rate: number | null;
+  subtotal: number | null;
+  gst: number | null;
+  total: number | null;
+  status: string;
+  staff_name: string;
+  abn: string | null;
+};
+
+function downloadCsv(filename: string, rows: (string | number)[][]) {
+  const csv = rows.map((r) => r.map((c) => {
+    const s = String(c ?? "");
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }).join(",")).join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function InvoicesTab({ vendorId }: { vendorId: string }) {
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sub, setSub] = useState<"pending" | "approved" | "paid">("pending");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const supabase = createClient();
+    const { data } = await supabase.from("contractor_invoices").select("*").eq("vendor_id", vendorId).order("invoice_date", { ascending: false });
+    const rows = (data ?? []) as any[];
+    const staffIds = [...new Set(rows.map((r) => r.staff_id).filter(Boolean))];
+    let nameMap: Record<string, string> = {}, abnMap: Record<string, string | null> = {};
+    if (staffIds.length) {
+      const [u, sp] = await Promise.all([
+        supabase.from("users").select("id, full_name").in("id", staffIds),
+        supabase.from("staff_profiles").select("user_id, abn").in("user_id", staffIds),
+      ]);
+      nameMap = Object.fromEntries(((u.data ?? []) as any[]).map((x) => [x.id, x.full_name]));
+      abnMap = Object.fromEntries(((sp.data ?? []) as any[]).map((x) => [x.user_id, x.abn]));
+    }
+    setInvoices(rows.map((r) => ({ ...r, staff_name: nameMap[r.staff_id] ?? "Unknown", abn: abnMap[r.staff_id] ?? null })));
+    setLoading(false);
+  }, [vendorId]);
+  useEffect(() => { load(); }, [load]);
+
+  async function setStatus(id: string, status: string) {
+    await createClient().from("contractor_invoices").update({ status }).eq("id", id);
+    setInvoices((prev) => prev.map((i) => (i.id === id ? { ...i, status } : i)));
+  }
+
+  const filtered = invoices.filter((i) => (i.status ?? "pending").toLowerCase() === sub);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex gap-2">
+        {(["pending", "approved", "paid"] as const).map((s) => (
+          <button key={s} onClick={() => setSub(s)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${sub === s ? "bg-[#FF6B35] text-white" : "bg-[#1a1a1a] text-zinc-400 hover:text-white"}`}>
+            {s} ({invoices.filter((i) => (i.status ?? "pending").toLowerCase() === s).length})
+          </button>
+        ))}
+      </div>
+
+      {loading ? <Skeleton count={3} /> : filtered.length === 0 ? (
+        <EmptyState icon={<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>} title={`No ${sub} invoices`} />
+      ) : (
+        <div className="flex flex-col gap-3">
+          {filtered.map((inv) => (
+            <div key={inv.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-white truncate">{inv.staff_name}</p>
+                  <p className="text-xs text-zinc-500">ABN: {inv.abn ?? "—"}</p>
+                  <p className="text-xs text-zinc-600 mt-0.5">{inv.invoice_number ?? "Invoice"} · {fmtDate(inv.invoice_date)}</p>
+                </div>
+                <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-semibold ${
+                  inv.status === "paid" ? "bg-emerald-500/10 text-emerald-400" :
+                  inv.status === "approved" ? "bg-blue-500/10 text-blue-300" :
+                  inv.status === "declined" ? "bg-rose-500/10 text-rose-400" : "bg-amber-500/10 text-amber-400"
+                }`}>{(inv.status ?? "pending").toUpperCase()}</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-3 text-xs text-zinc-400">
+                <span>Hours: <span className="text-zinc-200">{inv.hours ?? "—"}</span></span>
+                <span>Rate: <span className="text-zinc-200">{inv.rate != null ? money(inv.rate) : "—"}</span></span>
+                <span>Subtotal: <span className="text-zinc-200">{inv.subtotal != null ? money(inv.subtotal) : "—"}</span></span>
+                <span>GST: <span className="text-zinc-200">{inv.gst != null ? money(inv.gst) : "—"}</span></span>
+                <span className="col-span-2">Total: <span className="text-white font-semibold">{inv.total != null ? money(inv.total) : "—"}</span></span>
+              </div>
+
+              {(inv.status === "pending" || !inv.status) && (
+                <div className="flex gap-2 mt-3">
+                  <button onClick={() => setStatus(inv.id, "approved")} className="rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-emerald-300 px-3 py-1.5 text-xs font-semibold hover:bg-emerald-600/40 transition-colors">Approve</button>
+                  <button onClick={() => setStatus(inv.id, "declined")} className="rounded-lg bg-rose-600/20 border border-rose-500/30 text-rose-300 px-3 py-1.5 text-xs font-semibold hover:bg-rose-600/40 transition-colors">Decline</button>
+                </div>
+              )}
+              {inv.status === "approved" && (
+                <div className="flex gap-2 mt-3">
+                  <button onClick={() => setStatus(inv.id, "paid")} className="rounded-lg bg-[#FF6B35] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#ff7d4d] transition-colors">Mark as Paid</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PAYROLL TAB (employees export + TPAR)
+// ════════════════════════════════════════════════════════════════════════════
+
+type PayrollRow = { staff_id: string; name: string; abn: string | null; date: string | null; hours: number; rate: number; mult: number; total: number };
+
+function EmployeesPayroll({ vendorId }: { vendorId: string }) {
+  const [range, setRange] = useState<"week" | "month" | "custom">("week");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+  const [rows, setRows] = useState<PayrollRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const bounds = useCallback((): [string, string] | null => {
+    const now = new Date();
+    if (range === "week") { const s = mondayOf(now); const e = new Date(s); e.setDate(e.getDate() + 6); return [toISODate(s), toISODate(e)]; }
+    if (range === "month") { const s = new Date(now.getFullYear(), now.getMonth(), 1); const e = new Date(now.getFullYear(), now.getMonth() + 1, 0); return [toISODate(s), toISODate(e)]; }
+    return customStart && customEnd ? [customStart, customEnd] : null;
+  }, [range, customStart, customEnd]);
+
+  const load = useCallback(async () => {
+    const b = bounds();
+    if (!b) { setRows([]); setLoading(false); return; }
+    setLoading(true);
+    const supabase = createClient();
+    const { data } = await supabase.from("shifts").select("staff_id, clock_in_time, hours_worked, total_pay")
+      .eq("vendor_id", vendorId).eq("status", "completed")
+      .gte("clock_in_time", b[0] + "T00:00:00").lte("clock_in_time", b[1] + "T23:59:59")
+      .order("clock_in_time", { ascending: true });
+    const shifts = (data ?? []) as any[];
+    const staffIds = [...new Set(shifts.map((s) => s.staff_id).filter(Boolean))];
+    let nameMap: Record<string, string> = {}, abnMap: Record<string, string | null> = {};
+    if (staffIds.length) {
+      const [u, sp] = await Promise.all([
+        supabase.from("users").select("id, full_name").in("id", staffIds),
+        supabase.from("staff_profiles").select("user_id, abn").in("user_id", staffIds),
+      ]);
+      nameMap = Object.fromEntries(((u.data ?? []) as any[]).map((x) => [x.id, x.full_name]));
+      abnMap = Object.fromEntries(((sp.data ?? []) as any[]).map((x) => [x.user_id, x.abn]));
+    }
+    setRows(shifts.map((s) => {
+      const hours = s.hours_worked ?? 0;
+      const total = s.total_pay ?? 0;
+      const info = awardInfo((s.clock_in_time ?? "").slice(0, 10), (s.clock_in_time ?? "").slice(11, 16));
+      return { staff_id: s.staff_id, name: nameMap[s.staff_id] ?? "Unknown", abn: abnMap[s.staff_id] ?? null, date: s.clock_in_time, hours, rate: hours > 0 ? total / hours : 0, mult: info.mult, total };
+    }));
+    setLoading(false);
+  }, [vendorId, bounds]);
+  useEffect(() => { load(); }, [load]);
+
+  function exportCsv() {
+    downloadCsv(`payroll-employees-${toISODate(new Date())}.csv`, [
+      ["Staff Name", "ABN", "Date", "Hours", "Rate", "Award Multiplier", "Total"],
+      ...rows.map((r) => [r.name, r.abn ?? "", fmtDate(r.date), r.hours.toFixed(2), r.rate.toFixed(2), `${r.mult}×`, r.total.toFixed(2)]),
+    ]);
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-2">
+        {(["week", "month", "custom"] as const).map((r) => (
+          <button key={r} onClick={() => setRange(r)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${range === r ? "bg-[#FF6B35] text-white" : "bg-[#1a1a1a] text-zinc-400 hover:text-white"}`}>
+            {r === "week" ? "This Week" : r === "month" ? "This Month" : "Custom"}
+          </button>
+        ))}
+        {range === "custom" && (
+          <div className="flex items-center gap-2">
+            <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className="rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs text-white outline-none focus:border-[#FF6B35] [color-scheme:dark]" />
+            <span className="text-xs text-zinc-500">→</span>
+            <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} className="rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs text-white outline-none focus:border-[#FF6B35] [color-scheme:dark]" />
+          </div>
+        )}
+        <div className="flex-1" />
+        <button onClick={exportCsv} disabled={rows.length === 0} className="rounded-lg border border-[#FF6B35]/40 bg-[#FF6B35]/10 px-3 py-1.5 text-xs font-semibold text-[#FF6B35] hover:bg-[#FF6B35]/20 transition-colors disabled:opacity-40">Download CSV</button>
+      </div>
+
+      {loading ? <Skeleton count={4} /> : rows.length === 0 ? (
+        <p className="text-sm text-zinc-600 py-8 text-center">No completed shifts in this range.</p>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-white/[0.06] text-zinc-500">
+                <th className="px-3 py-2.5 text-left font-medium">Staff</th>
+                <th className="px-3 py-2.5 text-left font-medium">ABN</th>
+                <th className="px-3 py-2.5 text-left font-medium">Date</th>
+                <th className="px-3 py-2.5 text-right font-medium">Hrs</th>
+                <th className="px-3 py-2.5 text-right font-medium">Rate</th>
+                <th className="px-3 py-2.5 text-right font-medium">Mult</th>
+                <th className="px-3 py-2.5 text-right font-medium">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} className="border-b border-white/[0.04]">
+                  <td className="px-3 py-2 text-zinc-300">{r.name}</td>
+                  <td className="px-3 py-2 text-zinc-500">{r.abn ?? "—"}</td>
+                  <td className="px-3 py-2 text-zinc-400 whitespace-nowrap">{fmtDate(r.date)}</td>
+                  <td className="px-3 py-2 text-right text-zinc-300">{r.hours.toFixed(1)}</td>
+                  <td className="px-3 py-2 text-right text-zinc-300">{money(r.rate)}</td>
+                  <td className="px-3 py-2 text-right text-amber-400">{r.mult}×</td>
+                  <td className="px-3 py-2 text-right text-white">{money(r.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const FY_OPTIONS: [string, string, string][] = [
+  ["2024-25", "2024-07-01", "2025-06-30"],
+  ["2025-26", "2025-07-01", "2026-06-30"],
+  ["2026-27", "2026-07-01", "2027-06-30"],
+];
+
+function TparPayroll({ vendorId }: { vendorId: string }) {
+  const [fy, setFy] = useState("2025-26");
+  const [rows, setRows] = useState<{ name: string; abn: string | null; exGst: number; gst: number; gross: number }[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const supabase = createClient();
+    const bounds = FY_OPTIONS.find((f) => f[0] === fy);
+    const { data } = await supabase.from("contractor_invoices").select("staff_id, subtotal, gst, total, invoice_date, status")
+      .eq("vendor_id", vendorId).eq("status", "paid")
+      .gte("invoice_date", bounds![1]).lte("invoice_date", bounds![2]);
+    const invs = (data ?? []) as any[];
+    const staffIds = [...new Set(invs.map((r) => r.staff_id).filter(Boolean))];
+    let nameMap: Record<string, string> = {}, abnMap: Record<string, string | null> = {};
+    if (staffIds.length) {
+      const [u, sp] = await Promise.all([
+        supabase.from("users").select("id, full_name").in("id", staffIds),
+        supabase.from("staff_profiles").select("user_id, abn").in("user_id", staffIds),
+      ]);
+      nameMap = Object.fromEntries(((u.data ?? []) as any[]).map((x) => [x.id, x.full_name]));
+      abnMap = Object.fromEntries(((sp.data ?? []) as any[]).map((x) => [x.user_id, x.abn]));
+    }
+    const byStaff: Record<string, { name: string; abn: string | null; exGst: number; gst: number; gross: number }> = {};
+    for (const inv of invs) {
+      const k = inv.staff_id;
+      if (!byStaff[k]) byStaff[k] = { name: nameMap[k] ?? "Unknown", abn: abnMap[k] ?? null, exGst: 0, gst: 0, gross: 0 };
+      byStaff[k].exGst += inv.subtotal ?? 0;
+      byStaff[k].gst += inv.gst ?? 0;
+      byStaff[k].gross += inv.total ?? 0;
+    }
+    setRows(Object.values(byStaff));
+    setLoading(false);
+  }, [vendorId, fy]);
+  useEffect(() => { load(); }, [load]);
+
+  function exportCsv() {
+    downloadCsv(`tpar-${fy}.csv`, [
+      ["Payee ABN", "Payee Name", "Total Payments (excl GST)", "Total GST", "Gross Amount"],
+      ...rows.map((r) => [r.abn ?? "", r.name, r.exGst.toFixed(2), r.gst.toFixed(2), r.gross.toFixed(2)]),
+    ]);
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-2">
+        <select value={fy} onChange={(e) => setFy(e.target.value)} className="rounded-lg border border-white/[0.08] bg-[#141414] px-3 py-1.5 text-sm text-white outline-none focus:border-[#FF6B35] [color-scheme:dark]">
+          {FY_OPTIONS.map(([label]) => <option key={label} value={label}>FY {label}</option>)}
+        </select>
+        <div className="flex-1" />
+        <button onClick={exportCsv} disabled={rows.length === 0} className="rounded-lg border border-[#FF6B35]/40 bg-[#FF6B35]/10 px-3 py-1.5 text-xs font-semibold text-[#FF6B35] hover:bg-[#FF6B35]/20 transition-colors disabled:opacity-40">Download TPAR CSV</button>
+      </div>
+
+      {loading ? <Skeleton count={3} /> : rows.length === 0 ? (
+        <p className="text-sm text-zinc-600 py-8 text-center">No paid contractor invoices in FY {fy}.</p>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-white/[0.06] text-zinc-500">
+                <th className="px-3 py-2.5 text-left font-medium">Name</th>
+                <th className="px-3 py-2.5 text-left font-medium">ABN</th>
+                <th className="px-3 py-2.5 text-right font-medium">Total (ex GST)</th>
+                <th className="px-3 py-2.5 text-right font-medium">GST</th>
+                <th className="px-3 py-2.5 text-right font-medium">Gross</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} className="border-b border-white/[0.04]">
+                  <td className="px-3 py-2 text-zinc-300">{r.name}</td>
+                  <td className="px-3 py-2 text-zinc-500">{r.abn ?? "—"}</td>
+                  <td className="px-3 py-2 text-right text-zinc-300">{money(r.exGst)}</td>
+                  <td className="px-3 py-2 text-right text-zinc-300">{money(r.gst)}</td>
+                  <td className="px-3 py-2 text-right text-white">{money(r.gross)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <p className="text-xs text-zinc-500 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
+        Lodge your TPAR with the ATO by 28 August each year via the ATO Business Portal or through your tax agent.
+      </p>
+    </div>
+  );
+}
+
+function PayrollTab({ vendorId }: { vendorId: string }) {
+  const [sub, setSub] = useState<"employees" | "tpar">("employees");
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex gap-2">
+        {([["employees", "Employees"], ["tpar", "TPAR"]] as ["employees" | "tpar", string][]).map(([key, label]) => (
+          <button key={key} onClick={() => setSub(key)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${sub === key ? "bg-[#FF6B35] text-white" : "bg-[#1a1a1a] text-zinc-400 hover:text-white"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {sub === "employees" ? <EmployeesPayroll vendorId={vendorId} /> : <TparPayroll vendorId={vendorId} />}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // PAGE
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -1172,10 +1668,10 @@ export default function VendorTeamPage() {
     <div className="max-w-3xl mx-auto px-5 py-8">
       <h1 className="text-xl font-bold text-white mb-6">Team</h1>
 
-      <div className="flex gap-0 mb-6 border-b border-white/[0.06]">
-        {([["staff", "My Staff"], ["schedule", "Schedule"], ["timesheets", "Timesheets"]] as [Tab, string][]).map(([key, label]) => (
+      <div className="flex gap-0 mb-6 border-b border-white/[0.06] overflow-x-auto scrollbar-none">
+        {([["staff", "My Staff"], ["schedule", "Schedule"], ["timesheets", "Timesheets"], ["invoices", "Invoices"], ["payroll", "Payroll"]] as [Tab, string][]).map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === key ? "text-white border-[#FF6B35]" : "text-zinc-500 border-transparent hover:text-zinc-300"}`}>
+            className={`shrink-0 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${tab === key ? "text-white border-[#FF6B35]" : "text-zinc-500 border-transparent hover:text-zinc-300"}`}>
             {label}
           </button>
         ))}
@@ -1184,6 +1680,8 @@ export default function VendorTeamPage() {
       {tab === "staff" && <MyStaffTab vendorId={user.id} />}
       {tab === "schedule" && <ScheduleTab vendorId={user.id} />}
       {tab === "timesheets" && <TimesheetsTab vendorId={user.id} />}
+      {tab === "invoices" && <InvoicesTab vendorId={user.id} />}
+      {tab === "payroll" && <PayrollTab vendorId={user.id} />}
     </div>
   );
 }
