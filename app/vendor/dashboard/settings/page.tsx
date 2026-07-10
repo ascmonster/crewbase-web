@@ -122,6 +122,10 @@ export default function VendorSettingsPage() {
   const [squareConnected, setSquareConnected] = useState(false);
   const [squareMerchantName, setSquareMerchantName] = useState<string | null>(null);
   const [phoneVerified, setPhoneVerified] = useState(false);
+  const [abnVerified, setAbnVerified] = useState(false);
+  const [abnBusinessName, setAbnBusinessName] = useState<string | null>(null);
+  const [gstRegistered, setGstRegistered] = useState(false);
+  const [verifyingAbn, setVerifyingAbn] = useState(false);
 
   // Subscription
   const [subscription, setSubscription] = useState<Subscription>(null);
@@ -148,7 +152,7 @@ export default function VendorSettingsPage() {
       /* eslint-disable @typescript-eslint/no-explicit-any */
       const { data } = await createClient()
         .from("vendor_profiles")
-        .select("business_name, abn, suburb, state, phone, description, approval_status, logo_url, onboarding_complete, square_connected, square_merchant_name, is_verified, verification_status, phone_verified")
+        .select("business_name, abn, suburb, state, phone, description, approval_status, logo_url, onboarding_complete, square_connected, square_merchant_name, is_verified, verification_status, phone_verified, abn_verified, abn_business_name, gst_registered")
         .eq("user_id", user!.id)
         .maybeSingle();
       const p = (data ?? {}) as any;
@@ -166,6 +170,9 @@ export default function VendorSettingsPage() {
       setSquareConnected(p.square_connected === true);
       setSquareMerchantName(p.square_merchant_name ?? null);
       setPhoneVerified(p.phone_verified === true);
+      setAbnVerified(p.abn_verified === true);
+      setAbnBusinessName(p.abn_business_name ?? null);
+      setGstRegistered(p.gst_registered === true);
       /* eslint-enable @typescript-eslint/no-explicit-any */
       setProfileLoading(false);
     }
@@ -238,6 +245,32 @@ export default function VendorSettingsPage() {
       .eq("user_id", user!.id);
     setSaving(false);
     showToast();
+  }
+
+  async function handleVerifyAbn() {
+    setVerifyingAbn(true);
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase.functions.invoke("validate-abn", {
+        body: { abn: form.abn.replace(/\s/g, "") },
+      });
+      if (error || !data?.valid) {
+        setAbnVerified(false);
+        alert(data?.reason ?? "Could not verify ABN. Please check and try again.");
+        return;
+      }
+      setAbnVerified(true);
+      setAbnBusinessName(data.entityName);
+      setGstRegistered(data.gstRegistered);
+      // Save immediately
+      await supabase.from("vendor_profiles").update({
+        abn_verified: true,
+        abn_business_name: data.entityName,
+        gst_registered: data.gstRegistered,
+      }).eq("user_id", user!.id);
+    } finally {
+      setVerifyingAbn(false);
+    }
   }
 
   async function uploadLogo(file: File) {
@@ -355,7 +388,32 @@ export default function VendorSettingsPage() {
             </div>
 
             <Field label="Business Name" value={form.business_name} onChange={(v) => setForm((p) => ({ ...p, business_name: v }))} />
-            <Field label="ABN" value={form.abn} onChange={(v) => setForm((p) => ({ ...p, abn: v }))} placeholder="12 345 678 901" />
+
+            {/* ABN + verification */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">ABN</label>
+              <div className="flex gap-2">
+                <input
+                  value={form.abn}
+                  onChange={(e) => { setForm((p) => ({ ...p, abn: e.target.value })); setAbnVerified(false); }}
+                  placeholder="12 345 678 901"
+                  className="flex-1 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-[#FF6B35] transition-colors"
+                />
+                <button
+                  onClick={handleVerifyAbn}
+                  disabled={!form.abn || verifyingAbn}
+                  className="px-3 py-2 text-sm bg-[#5B4AE8] text-white rounded-lg hover:bg-[#4a3bd0] disabled:opacity-50"
+                >
+                  {verifyingAbn ? "Verifying..." : "Verify ABN"}
+                </button>
+              </div>
+              {abnVerified && abnBusinessName && (
+                <p className="text-sm text-green-400 mt-1">✓ Verified — {abnBusinessName} {gstRegistered ? "· GST Registered" : "· Not GST Registered"}</p>
+              )}
+              {form.abn && !abnVerified && (
+                <p className="text-sm text-amber-400 mt-1">⚠ ABN not verified</p>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Suburb" value={form.suburb} onChange={(v) => setForm((p) => ({ ...p, suburb: v }))} />
               <Field label="State" value={form.state} onChange={(v) => setForm((p) => ({ ...p, state: v }))} />
@@ -399,6 +457,23 @@ export default function VendorSettingsPage() {
                 {phoneVerified ? (
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-900/40 text-blue-400 border border-blue-800">
                     📞 Verified
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gray-800 text-gray-400">
+                    Not Verified
+                  </span>
+                )}
+              </div>
+
+              {/* ABN Verification */}
+              <div className="flex items-center justify-between py-3 border-b border-white/5">
+                <div>
+                  <p className="text-white text-sm font-medium">ABN Verification</p>
+                  <p className="text-gray-400 text-xs mt-0.5">Australian Business Number verified</p>
+                </div>
+                {abnVerified ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-green-900/40 text-green-400 border border-green-800">
+                    ✓ Verified
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gray-800 text-gray-400">
