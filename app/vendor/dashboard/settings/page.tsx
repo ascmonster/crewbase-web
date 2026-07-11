@@ -152,7 +152,7 @@ export default function VendorSettingsPage() {
       /* eslint-disable @typescript-eslint/no-explicit-any */
       const { data } = await createClient()
         .from("vendor_profiles")
-        .select("business_name, abn, suburb, state, phone, description, approval_status, logo_url, onboarding_complete, square_connected, square_merchant_name, is_verified, verification_status, phone_verified, abn_verified, abn_business_name, gst_registered")
+        .select("business_name, abn, suburb, state, phone, description, approval_status, logo_url, onboarding_complete, square_connected, square_merchant_name, phone_verified, abn_verified, abn_business_name, gst_registered")
         .eq("user_id", user!.id)
         .maybeSingle();
       const p = (data ?? {}) as any;

@@ -602,12 +602,12 @@ function ShiftModal({ vendorId, staff, trucks, events, existing, defaultDate, on
     let cancelled = false;
     if ((shiftType !== "assigned" && shiftType !== "event") || !staffId || !date) { setAvailMsg(null); return; }
     (async () => {
-      const { data } = await createClient().from("staff_availability").select("status").eq("staff_id", staffId).eq("date", date).maybeSingle();
+      const { data } = await createClient().from("staff_availability").select("type").eq("staff_id", staffId).eq("date", date).maybeSingle();
       if (cancelled) return;
-      const status = (data as any)?.status;
+      const type = (data as any)?.type;
       const name = staff.find((s) => s.staff_id === staffId)?.full_name ?? "This staff member";
-      if (status === "unavailable") setAvailMsg({ kind: "warn", text: `⚠️ ${name} is unavailable on this date` });
-      else if (status === "preferred") setAvailMsg({ kind: "hint", text: `✅ This is a preferred date for ${name}` });
+      if (type === "unavailable") setAvailMsg({ kind: "warn", text: `⚠️ ${name} is unavailable on this date` });
+      else if (type === "preferred") setAvailMsg({ kind: "hint", text: `✅ This is a preferred date for ${name}` });
       else setAvailMsg(null);
     })();
     return () => { cancelled = true; };
@@ -905,13 +905,13 @@ function ScheduleTab({ vendorId }: { vendorId: string }) {
         const teamIds = [...new Set(((svaIds2 ?? []) as any[]).map((r) => r.staff_id))];
         const avail: Record<string, { unavailable: boolean; preferred: boolean }> = {};
         if (teamIds.length) {
-          const { data: av } = await supabase.from("staff_availability").select("staff_id, date, status")
+          const { data: av } = await supabase.from("staff_availability").select("staff_id, date, type")
             .in("staff_id", teamIds).gte("date", toISODate(start)).lte("date", toISODate(end));
           for (const a of (av ?? []) as any[]) {
             const key = (a.date || "").slice(0, 10);
             if (!avail[key]) avail[key] = { unavailable: false, preferred: false };
-            if (a.status === "unavailable") avail[key].unavailable = true;
-            if (a.status === "preferred") avail[key].preferred = true;
+            if (a.type === "unavailable") avail[key].unavailable = true;
+            if (a.type === "preferred") avail[key].preferred = true;
           }
         }
         setAvailByDate(avail);
