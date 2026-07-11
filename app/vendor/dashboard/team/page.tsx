@@ -1312,7 +1312,7 @@ type Invoice = {
   staff_id: string;
   invoice_number: string | null;
   invoice_date: string | null;
-  hours: number | null;
+  hours_worked: number | null;
   rate: number | null;
   subtotal: number | null;
   gst: number | null;
@@ -1396,7 +1396,7 @@ function InvoicesTab({ vendorId }: { vendorId: string }) {
               </div>
 
               <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-3 text-xs text-zinc-400">
-                <span>Hours: <span className="text-zinc-200">{inv.hours ?? "—"}</span></span>
+                <span>Hours: <span className="text-zinc-200">{inv.hours_worked ?? "—"}</span></span>
                 <span>Rate: <span className="text-zinc-200">{inv.rate != null ? money(inv.rate) : "—"}</span></span>
                 <span>Subtotal: <span className="text-zinc-200">{inv.subtotal != null ? money(inv.subtotal) : "—"}</span></span>
                 <span>GST: <span className="text-zinc-200">{inv.gst != null ? money(inv.gst) : "—"}</span></span>

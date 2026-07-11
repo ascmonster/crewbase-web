@@ -62,7 +62,6 @@ type CheckinRow = {
   user_id: string;
   checked_in_at: string | null;
   checked_out_at: string | null;
-  status: string;
 };
 
 type DocRow = {
@@ -2545,7 +2544,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
       // 7. Check-ins
       const { data: ciData } = await supabase
         .from("event_checkins")
-        .select("user_id, checked_in_at, checked_out_at, status")
+        .select("user_id, checked_in_at, checked_out_at")
         .eq("event_id", id)
         .order("checked_in_at", { ascending: false });
 
