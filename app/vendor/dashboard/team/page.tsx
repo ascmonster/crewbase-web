@@ -1136,7 +1136,7 @@ function ScheduleTab({ vendorId }: { vendorId: string }) {
           <EmptyState
             icon={<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>}
             title="No open shifts"
-            sub="Post an open shift for staff to claim."
+            sub="Post an open shift with the + button. Jobs posted via the Jobs tab also appear here for your team to claim."
           />
         ) : (
           <div className="flex flex-col gap-3">
