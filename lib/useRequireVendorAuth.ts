@@ -43,14 +43,21 @@ export function useRequireVendorAuth() {
           return;
         }
 
-        setUser({ id: u.id, email: u.email ?? "" });
-
         const { data: vendor } = await supabase
           .from("vendor_profiles")
-          .select("business_name")
+          .select("business_name, approval_status")
           .eq("user_id", u.id)
           .single();
 
+        // Re-check approval on every load — a session created before the account
+        // was suspended/rejected must be kicked out of the portal.
+        if (vendor?.approval_status && ["pending", "rejected", "suspended"].includes(vendor.approval_status)) {
+          await supabase.auth.signOut();
+          router.replace("/login");
+          return;
+        }
+
+        setUser({ id: u.id, email: u.email ?? "" });
         setBusinessName(vendor?.business_name ?? u.email ?? "Vendor");
       } finally {
         clearTimeout(timeout);

@@ -31,6 +31,21 @@ export function useRequireAuth() {
         }
 
         const u = session.user;
+
+        // Re-check approval on every load — a session created before the account
+        // was suspended/rejected must be kicked out of the portal.
+        const { data: promoterProfile } = await supabase
+          .from("promoter_profiles")
+          .select("approval_status")
+          .eq("user_id", u.id)
+          .maybeSingle();
+
+        if (promoterProfile?.approval_status && ["pending", "rejected", "suspended"].includes(promoterProfile.approval_status)) {
+          await supabase.auth.signOut();
+          router.replace("/login");
+          return;
+        }
+
         setUser({ id: u.id, email: u.email ?? "" });
 
         const { data } = await supabase
