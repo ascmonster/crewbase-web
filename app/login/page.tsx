@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase";
 
-type Stage = "form" | "pending" | "rejected";
+type Stage = "form" | "pending" | "rejected" | "suspended";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -85,6 +85,12 @@ export default function LoginPage() {
         return;
       }
 
+      if (approvalStatus === "suspended") {
+        setStage("suspended");
+        setLoading(false);
+        return;
+      }
+
       router.push("/dashboard");
       return;
     }
@@ -108,6 +114,12 @@ export default function LoginPage() {
       if (approvalStatus === "rejected") {
         setStatusMessage("Your account has been rejected");
         setStage("rejected");
+        setLoading(false);
+        return;
+      }
+
+      if (approvalStatus === "suspended") {
+        setStage("suspended");
         setLoading(false);
         return;
       }
@@ -185,6 +197,45 @@ export default function LoginPage() {
               <a href="mailto:hello@trycrewbase.com" className="text-indigo-400 hover:underline">
                 hello@trycrewbase.com
               </a>
+            </p>
+            <button
+              onClick={handleSignOut}
+              className="w-full h-10 rounded-lg border border-white/[0.08] text-sm font-medium text-zinc-400 hover:text-white hover:bg-white/[0.04] transition-colors"
+            >
+              Log Out
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (stage === "suspended") {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center px-4">
+        <div className="w-full max-w-sm">
+          <div className="mb-10 text-center">
+            <div className="flex justify-center mb-2">
+              <Image src="/logo-icon.png" alt="Crewbase" width={80} height={80} style={{ objectFit: "contain" }} />
+            </div>
+            <span className="text-3xl font-bold tracking-tight text-white">
+              Crew<span className="text-indigo-400">base</span>
+            </span>
+            <p className="mt-2 text-sm text-zinc-500">Sign in to your account</p>
+          </div>
+          <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] px-8 py-10 shadow-xl shadow-black/40 text-center">
+            <div className="mb-4 flex items-center justify-center">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#E91E8C" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+              </svg>
+            </div>
+            <h2 className="text-lg font-semibold text-white mb-3">Account Suspended</h2>
+            <p className="text-sm text-zinc-400 mb-6">
+              Your account has been suspended. Please contact{" "}
+              <a href="mailto:hello@trycrewbase.com" className="text-[#E91E8C] hover:underline">
+                hello@trycrewbase.com
+              </a>{" "}
+              for assistance.
             </p>
             <button
               onClick={handleSignOut}
