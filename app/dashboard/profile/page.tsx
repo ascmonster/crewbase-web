@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase";
 type PromoterProfile = {
   company_name: string | null;
   approval_status: string | null;
+  phone: string | null;
   abn: string | null;
   abn_verified: boolean | null;
   abn_business_name: string | null;
@@ -17,7 +18,6 @@ type PromoterProfile = {
 
 type StaffProfile = {
   full_name: string | null;
-  phone: string | null;
 };
 
 type PayRates = {
@@ -55,11 +55,17 @@ function EditProfileModal({
     const [ppRes, spRes] = await Promise.all([
       supabase
         .from("promoter_profiles")
-        .update({ company_name: form.companyName.trim() || null })
-        .eq("user_id", userId),
+        .upsert(
+          {
+            user_id: userId,
+            company_name: form.companyName.trim() || null,
+            phone: form.phone.trim() || null,
+          },
+          { onConflict: "user_id" },
+        ),
       supabase
         .from("staff_profiles")
-        .update({ full_name: form.fullName.trim() || null, phone: form.phone.trim() || null })
+        .update({ full_name: form.fullName.trim() || null })
         .eq("user_id", userId),
     ]);
     if (ppRes.error || spRes.error) {
@@ -175,6 +181,7 @@ export default function ProfilePage() {
   const [abnBusinessName, setAbnBusinessName] = useState<string | null>(null);
   const [gstRegistered, setGstRegistered]   = useState(false);
   const [verifyingAbn, setVerifyingAbn]     = useState(false);
+  const [abnEditing, setAbnEditing]         = useState(false);
   const [dataLoading, setDataLoading] = useState(true);
   const [showEdit, setShowEdit]       = useState(false);
   const [showDelete, setShowDelete]   = useState(false);
@@ -188,8 +195,8 @@ export default function ProfilePage() {
       const supabase = createClient();
       try {
         const [ppRes, spRes, evRes, prRes] = await Promise.all([
-          supabase.from("promoter_profiles").select("company_name, approval_status, abn, abn_verified, abn_business_name, gst_registered").eq("user_id", user!.id).maybeSingle(),
-          supabase.from("staff_profiles").select("full_name, phone").eq("user_id", user!.id).maybeSingle(),
+          supabase.from("promoter_profiles").select("company_name, approval_status, phone, abn, abn_verified, abn_business_name, gst_registered").eq("user_id", user!.id).maybeSingle(),
+          supabase.from("staff_profiles").select("full_name").eq("user_id", user!.id).maybeSingle(),
           supabase.from("events").select("id").eq("promoter_id", user!.id),
           supabase.from("pay_rates").select("base_rate, saturday_rate, public_holiday_rate").eq("vendor_id", user!.id).maybeSingle(),
         ]);
@@ -244,6 +251,7 @@ export default function ProfilePage() {
         return;
       }
       setAbnVerified(true);
+      setAbnEditing(false);
       setAbnBusinessName(data.entityName);
       setGstRegistered(data.gst);
       // Save immediately
@@ -256,6 +264,15 @@ export default function ProfilePage() {
     } finally {
       setVerifyingAbn(false);
     }
+  }
+
+  async function handleEditAbn() {
+    setAbnEditing(true);
+    setAbnVerified(false);
+    await createClient()
+      .from("promoter_profiles")
+      .update({ abn_verified: false })
+      .eq("user_id", user!.id);
   }
 
   async function handleDeleteAccount() {
@@ -285,7 +302,7 @@ export default function ProfilePage() {
   const displayFullName  = staffProfile?.full_name ?? promoterName ?? "—";
   const displayCompany   = promoterProfile?.company_name ?? null;
   const displayEmail     = user?.email ?? "";
-  const displayPhone     = staffProfile?.phone ?? null;
+  const displayPhone     = promoterProfile?.phone ?? null;
   const approvalStatus   = promoterProfile?.approval_status ?? null;
 
   const initials = (displayCompany ?? displayFullName).charAt(0).toUpperCase();
@@ -307,8 +324,8 @@ export default function ProfilePage() {
             phone:       displayPhone ?? "",
           }}
           onSaved={({ companyName, fullName, phone }) => {
-            setPromoterProfile((p) => ({ ...p!, company_name: companyName || null }));
-            setStaffProfile((p) => ({ ...p!, full_name: fullName || null, phone: phone || null }));
+            setPromoterProfile((p) => ({ ...p!, company_name: companyName || null, phone: phone || null }));
+            setStaffProfile((p) => ({ ...p!, full_name: fullName || null }));
           }}
           onClose={() => setShowEdit(false)}
         />
@@ -378,22 +395,36 @@ export default function ProfilePage() {
           <p className="text-xs font-semibold text-zinc-500 uppercase tracking-widest mb-3">ABN Verification</p>
           <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-5 py-5">
             <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">ABN</label>
-            <div className="flex gap-2 mt-1.5">
-              <input
-                value={abn}
-                onChange={(e) => { setAbn(e.target.value); setAbnVerified(false); }}
-                placeholder="12 345 678 901"
-                className="flex-1 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-violet-500 transition-colors"
-              />
-              <button
-                onClick={handleVerifyAbn}
-                disabled={!abn || verifyingAbn}
-                className="px-3 py-2 text-sm rounded-lg text-white transition-colors disabled:opacity-50"
-                style={{ backgroundColor: "#5B4AE8" }}
-              >
-                {verifyingAbn ? "Verifying…" : "Verify ABN"}
-              </button>
-            </div>
+            {abnVerified && !abnEditing ? (
+              <div className="flex items-center gap-2 mt-1.5">
+                <span className="flex-1 rounded-lg border border-white/[0.08] bg-white/[0.02] px-3.5 py-2.5 text-sm text-white">
+                  {abn}
+                </span>
+                <button
+                  onClick={handleEditAbn}
+                  className="px-3 py-2 text-sm rounded-lg border border-white/[0.08] text-zinc-300 hover:text-white hover:border-white/[0.16] transition-colors"
+                >
+                  Edit
+                </button>
+              </div>
+            ) : (
+              <div className="flex gap-2 mt-1.5">
+                <input
+                  value={abn}
+                  onChange={(e) => { setAbn(e.target.value); setAbnVerified(false); }}
+                  placeholder="12 345 678 901"
+                  className="flex-1 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-violet-500 transition-colors"
+                />
+                <button
+                  onClick={handleVerifyAbn}
+                  disabled={!abn || verifyingAbn}
+                  className="px-3 py-2 text-sm rounded-lg text-white transition-colors disabled:opacity-50"
+                  style={{ backgroundColor: "#5B4AE8" }}
+                >
+                  {verifyingAbn ? "Verifying…" : "Verify ABN"}
+                </button>
+              </div>
+            )}
             <div className="mt-3">
               {abnVerified ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-green-900/40 text-green-400 border border-green-800">
