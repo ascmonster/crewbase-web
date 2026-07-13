@@ -256,17 +256,17 @@ export default function VendorSettingsPage() {
       });
       if (error || !data?.valid) {
         setAbnVerified(false);
-        alert(data?.reason ?? "Could not verify ABN. Please check and try again.");
+        alert(data?.entityName || "ABN could not be verified.");
         return;
       }
       setAbnVerified(true);
       setAbnBusinessName(data.entityName);
-      setGstRegistered(data.gstRegistered);
+      setGstRegistered(data.gst);
       // Save immediately
       await supabase.from("vendor_profiles").update({
         abn_verified: true,
         abn_business_name: data.entityName,
-        gst_registered: data.gstRegistered,
+        gst_registered: data.gst,
       }).eq("user_id", user!.id);
     } finally {
       setVerifyingAbn(false);
