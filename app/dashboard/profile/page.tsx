@@ -9,6 +9,10 @@ import { createClient } from "@/lib/supabase";
 type PromoterProfile = {
   company_name: string | null;
   approval_status: string | null;
+  abn: string | null;
+  abn_verified: boolean | null;
+  abn_business_name: string | null;
+  gst_registered: boolean | null;
 };
 
 type StaffProfile = {
@@ -166,6 +170,11 @@ export default function ProfilePage() {
   const [eventCount, setEventCount]   = useState(0);
   const [vendorCount, setVendorCount] = useState(0);
   const [checkinCount, setCheckinCount] = useState(0);
+  const [abn, setAbn]                       = useState("");
+  const [abnVerified, setAbnVerified]       = useState(false);
+  const [abnBusinessName, setAbnBusinessName] = useState<string | null>(null);
+  const [gstRegistered, setGstRegistered]   = useState(false);
+  const [verifyingAbn, setVerifyingAbn]     = useState(false);
   const [dataLoading, setDataLoading] = useState(true);
   const [showEdit, setShowEdit]       = useState(false);
   const [showDelete, setShowDelete]   = useState(false);
@@ -179,13 +188,20 @@ export default function ProfilePage() {
       const supabase = createClient();
       try {
         const [ppRes, spRes, evRes, prRes] = await Promise.all([
-          supabase.from("promoter_profiles").select("company_name, approval_status").eq("user_id", user!.id).maybeSingle(),
+          supabase.from("promoter_profiles").select("company_name, approval_status, abn, abn_verified, abn_business_name, gst_registered").eq("user_id", user!.id).maybeSingle(),
           supabase.from("staff_profiles").select("full_name, phone").eq("user_id", user!.id).maybeSingle(),
           supabase.from("events").select("id").eq("promoter_id", user!.id),
           supabase.from("pay_rates").select("base_rate, saturday_rate, public_holiday_rate").eq("vendor_id", user!.id).maybeSingle(),
         ]);
 
-        if (ppRes.data) setPromoterProfile(ppRes.data as PromoterProfile);
+        if (ppRes.data) {
+          const pp = ppRes.data as PromoterProfile;
+          setPromoterProfile(pp);
+          setAbn(pp.abn ?? "");
+          setAbnVerified(pp.abn_verified === true);
+          setAbnBusinessName(pp.abn_business_name ?? null);
+          setGstRegistered(pp.gst_registered === true);
+        }
         if (spRes.data) setStaffProfile(spRes.data as StaffProfile);
         if (prRes.data) setPayRates(prRes.data as PayRates);
 
@@ -213,6 +229,33 @@ export default function ProfilePage() {
     setLoggingOut(true);
     await createClient().auth.signOut();
     router.replace("/login");
+  }
+
+  async function handleVerifyAbn() {
+    setVerifyingAbn(true);
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase.functions.invoke("validate-abn", {
+        body: { abn: abn.replace(/\s/g, "") },
+      });
+      if (error || !data?.valid) {
+        setAbnVerified(false);
+        alert(data?.entityName || "ABN could not be verified.");
+        return;
+      }
+      setAbnVerified(true);
+      setAbnBusinessName(data.entityName);
+      setGstRegistered(data.gst);
+      // Save immediately
+      await supabase.from("promoter_profiles").update({
+        abn: abn.replace(/\s/g, ""),
+        abn_verified: true,
+        abn_business_name: data.entityName,
+        gst_registered: data.gst,
+      }).eq("user_id", user!.id);
+    } finally {
+      setVerifyingAbn(false);
+    }
   }
 
   async function handleDeleteAccount() {
@@ -327,6 +370,42 @@ export default function ProfilePage() {
                 <span className="text-sm text-white font-medium">{value}</span>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* ABN Verification */}
+        <div className="mb-6">
+          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-widest mb-3">ABN Verification</p>
+          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-5 py-5">
+            <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">ABN</label>
+            <div className="flex gap-2 mt-1.5">
+              <input
+                value={abn}
+                onChange={(e) => { setAbn(e.target.value); setAbnVerified(false); }}
+                placeholder="12 345 678 901"
+                className="flex-1 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-violet-500 transition-colors"
+              />
+              <button
+                onClick={handleVerifyAbn}
+                disabled={!abn || verifyingAbn}
+                className="px-3 py-2 text-sm rounded-lg text-white transition-colors disabled:opacity-50"
+                style={{ backgroundColor: "#5B4AE8" }}
+              >
+                {verifyingAbn ? "Verifying…" : "Verify ABN"}
+              </button>
+            </div>
+            <div className="mt-3">
+              {abnVerified ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-green-900/40 text-green-400 border border-green-800">
+                  ✓ Verified{abnBusinessName ? ` — ${abnBusinessName}` : ""}
+                  <span className="text-green-500/70">· {gstRegistered ? "GST Registered" : "Not GST Registered"}</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gray-800 text-gray-400">
+                  Not verified
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
