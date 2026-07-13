@@ -126,6 +126,7 @@ export default function VendorSettingsPage() {
   const [abnBusinessName, setAbnBusinessName] = useState<string | null>(null);
   const [gstRegistered, setGstRegistered] = useState(false);
   const [verifyingAbn, setVerifyingAbn] = useState(false);
+  const [abnEditing, setAbnEditing] = useState(false);
 
   // Subscription
   const [subscription, setSubscription] = useState<Subscription>(null);
@@ -260,6 +261,7 @@ export default function VendorSettingsPage() {
         return;
       }
       setAbnVerified(true);
+      setAbnEditing(false);
       setAbnBusinessName(data.entityName);
       setGstRegistered(data.gst);
       // Save immediately
@@ -271,6 +273,15 @@ export default function VendorSettingsPage() {
     } finally {
       setVerifyingAbn(false);
     }
+  }
+
+  async function handleEditAbn() {
+    setAbnEditing(true);
+    setAbnVerified(false);
+    await createClient()
+      .from("vendor_profiles")
+      .update({ abn_verified: false })
+      .eq("user_id", user!.id);
   }
 
   async function uploadLogo(file: File) {
@@ -392,21 +403,35 @@ export default function VendorSettingsPage() {
             {/* ABN + verification */}
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">ABN</label>
-              <div className="flex gap-2">
-                <input
-                  value={form.abn}
-                  onChange={(e) => { setForm((p) => ({ ...p, abn: e.target.value })); setAbnVerified(false); }}
-                  placeholder="12 345 678 901"
-                  className="flex-1 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-[#FF6B35] transition-colors"
-                />
-                <button
-                  onClick={handleVerifyAbn}
-                  disabled={!form.abn || verifyingAbn}
-                  className="px-3 py-2 text-sm bg-[#5B4AE8] text-white rounded-lg hover:bg-[#4a3bd0] disabled:opacity-50"
-                >
-                  {verifyingAbn ? "Verifying..." : "Verify ABN"}
-                </button>
-              </div>
+              {abnVerified && !abnEditing ? (
+                <div className="flex items-center gap-2">
+                  <span className="flex-1 rounded-lg border border-white/[0.08] bg-white/[0.02] px-3.5 py-2.5 text-sm text-white">
+                    {form.abn}
+                  </span>
+                  <button
+                    onClick={handleEditAbn}
+                    className="px-3 py-2 text-sm rounded-lg border border-white/[0.08] text-zinc-300 hover:text-white hover:border-white/[0.16] transition-colors"
+                  >
+                    Edit
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    value={form.abn}
+                    onChange={(e) => { setForm((p) => ({ ...p, abn: e.target.value })); setAbnVerified(false); }}
+                    placeholder="12 345 678 901"
+                    className="flex-1 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-[#FF6B35] transition-colors"
+                  />
+                  <button
+                    onClick={handleVerifyAbn}
+                    disabled={!form.abn || verifyingAbn}
+                    className="px-3 py-2 text-sm bg-[#5B4AE8] text-white rounded-lg hover:bg-[#4a3bd0] disabled:opacity-50"
+                  >
+                    {verifyingAbn ? "Verifying..." : "Verify ABN"}
+                  </button>
+                </div>
+              )}
               {abnVerified && abnBusinessName && (
                 <p className="text-sm text-green-400 mt-1">✓ Verified — {abnBusinessName} {gstRegistered ? "· GST Registered" : "· Not GST Registered"}</p>
               )}
