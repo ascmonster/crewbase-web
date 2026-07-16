@@ -10,6 +10,7 @@ import {
   type Allowance,
   type AwardRate,
   type PenaltyRate,
+  type PenaltyVariant,
 } from "@/lib/getAwardRates";
 
 /**
@@ -37,8 +38,6 @@ export default function AwardRateGuide({
   const [penalties, setPenalties] = useState<PenaltyRate[]>([]);
   const [allowances, setAllowances] = useState<Allowance[]>([]);
   const [loading, setLoading] = useState(false);
-  const [showPenalties, setShowPenalties] = useState(false);
-  const [showAllowances, setShowAllowances] = useState(false);
 
   const isJunior = staffAge != null && staffAge < 21;
   const juniorPct = isJunior ? getJuniorPercentage(staffAge!) : 1;
@@ -125,8 +124,9 @@ export default function AwardRateGuide({
             ))}
           </div>
 
-          {/* Entered-rate compliance check */}
-          {enteredRate != null && lowestMinimum != null && (
+          {/* Entered-rate compliance check — only for a positive rate that has
+              actually been entered (0 / blank is treated as "not entered"). */}
+          {enteredRate != null && enteredRate > 0 && lowestMinimum != null && (
             enteredRate < lowestMinimum ? (
               <p className="text-xs rounded-lg bg-orange-500/10 border border-orange-500/20 text-orange-400 px-3 py-2">
                 ⚠️ This rate may be below the FWC minimum (${lowestMinimum.toFixed(2)}/hr). Please check
@@ -139,58 +139,11 @@ export default function AwardRateGuide({
             )
           )}
 
-          {/* Penalty rates (opt-in) */}
-          {showPenaltyRates && penalties.length > 0 && (
-            <div className="rounded-lg border border-white/[0.06] overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setShowPenalties((v) => !v)}
-                className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-white/[0.03] transition-colors"
-              >
-                <span>Penalty Rates</span>
-                <span className="text-zinc-600">{showPenalties ? "−" : "+"}</span>
-              </button>
-              {showPenalties && (
-                <div className="px-3 pb-2">
-                  <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-1.5 text-xs">
-                    <span className="text-zinc-600 font-medium">Penalty</span>
-                    <span className="text-zinc-600 font-medium text-right">Casual</span>
-                    <span className="text-zinc-600 font-medium text-right">Permanent</span>
-                    {penalties.map((p, i) => (
-                      <PenaltyRow key={`${p.penalty_name}-${i}`} p={p} />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+          {/* Penalty rates (opt-in) — hidden entirely when there are none */}
+          {showPenaltyRates && <PenaltySection penalties={penalties} />}
 
-          {/* Allowances */}
-          {allowances.length > 0 && (
-            <div className="rounded-lg border border-white/[0.06] overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setShowAllowances((v) => !v)}
-                className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-white/[0.03] transition-colors"
-              >
-                <span>Allowances</span>
-                <span className="text-zinc-600">{showAllowances ? "−" : "+"}</span>
-              </button>
-              {showAllowances && (
-                <div className="px-3 pb-2 flex flex-col gap-1.5">
-                  {allowances.map((a, i) => (
-                    <div key={`${a.allowance_name}-${i}`} className="flex items-center justify-between text-xs">
-                      <span className="text-zinc-400 truncate mr-3">{a.allowance_name}</span>
-                      <span className="text-zinc-200 shrink-0">
-                        {a.amount != null ? `$${a.amount.toFixed(2)}` : "—"}
-                        {a.unit ? ` ${a.unit}` : ""}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          {/* Allowances — hidden entirely when there are none */}
+          <AllowancesSection allowances={allowances} />
         </>
       )}
 
@@ -199,13 +152,73 @@ export default function AwardRateGuide({
   );
 }
 
-function PenaltyRow({ p }: { p: PenaltyRate }) {
-  const fmt = (v: number | null) => (v == null ? "—" : v <= 5 ? `${v.toFixed(2)}×` : `$${v.toFixed(2)}`);
+// Format one penalty variant: multiplier and/or dollar rate.
+function fmtVariant(v: PenaltyVariant): string {
+  const parts: string[] = [];
+  if (v.multiplier != null) parts.push(`${v.multiplier.toFixed(2)}×`);
+  if (v.rate != null) parts.push(`$${v.rate.toFixed(2)}`);
+  return parts.length > 0 ? parts.join(" · ") : "—";
+}
+
+function PenaltySection({ penalties }: { penalties: PenaltyRate[] }) {
+  const [open, setOpen] = useState(false);
+  if (!penalties || penalties.length === 0) return null;
   return (
-    <>
-      <span className="text-zinc-400 truncate">{p.penalty_name}</span>
-      <span className="text-zinc-200 text-right">{fmt(p.casual)}</span>
-      <span className="text-zinc-200 text-right">{fmt(p.permanent)}</span>
-    </>
+    <div className="rounded-lg border border-white/[0.06] overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-white/[0.03] transition-colors"
+      >
+        <span>Penalty Rates</span>
+        <span className="text-zinc-600">{open ? "−" : "+"}</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-2 flex flex-col gap-2">
+          {penalties.map((p, i) => (
+            <div key={`${p.name}-${i}`} className="flex flex-col gap-0.5">
+              <span className="text-xs font-medium text-zinc-300">{p.name}</span>
+              <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+                {p.variants.map((v, j) => (
+                  <span key={`${v.label}-${j}`} className="text-xs text-zinc-400">
+                    {v.label}: <span className="text-zinc-200">{fmtVariant(v)}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AllowancesSection({ allowances }: { allowances: Allowance[] }) {
+  const [open, setOpen] = useState(false);
+  if (!allowances || allowances.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-white/[0.06] overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-white/[0.03] transition-colors"
+      >
+        <span>Allowances</span>
+        <span className="text-zinc-600">{open ? "−" : "+"}</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-2 flex flex-col gap-1.5">
+          {allowances.map((a, i) => (
+            <div key={`${a.allowance_name}-${i}`} className="flex items-center justify-between text-xs">
+              <span className="text-zinc-400 truncate mr-3">{a.allowance_name}</span>
+              <span className="text-zinc-200 shrink-0">
+                {a.amount != null ? `$${a.amount.toFixed(2)}` : "—"}
+                {a.unit ? ` ${a.unit}` : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

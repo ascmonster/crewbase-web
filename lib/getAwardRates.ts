@@ -79,10 +79,15 @@ export type AwardRate = {
   base_rate: number;
 };
 
+export type PenaltyVariant = {
+  label: string;
+  rate: number | null;
+  multiplier: number | null;
+};
+
 export type PenaltyRate = {
-  penalty_name: string;
-  casual: number | null;
-  permanent: number | null;
+  name: string;
+  variants: PenaltyVariant[];
 };
 
 export type Allowance = {
@@ -109,8 +114,13 @@ function normRate(raw: any): AwardRate {
   };
 }
 
-function isCasual(type: any): boolean {
-  return String(type ?? "").toLowerCase().includes("casual");
+// Human-readable label for a penalty_type value ("casual" → "Casual",
+// "full_time" → "Full Time", empty → "Permanent").
+function penaltyTypeLabel(raw: any): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return "Permanent";
+  if (s.toLowerCase().includes("casual")) return "Casual";
+  return s.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 // ── Queries ──────────────────────────────────────────────────────────────────
@@ -153,8 +163,10 @@ export async function getAllAwards(): Promise<AwardOption[]> {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// Penalty rates for an award, grouped by penalty name with casual/permanent
-// variants side by side.
+// Penalty rates for an award, grouped by penalty_name. Within each group the
+// variants are split by penalty_type (casual vs permanent/full-time), each
+// carrying its own dollar rate and/or multiplier. Mirrors the mobile
+// AwardRateGuide.js grouping.
 export async function getPenaltyRates(awardCode: string): Promise<PenaltyRate[]> {
   if (!awardCode) return [];
   const { data, error } = await createClient()
@@ -166,11 +178,16 @@ export async function getPenaltyRates(awardCode: string): Promise<PenaltyRate[]>
   const grouped = new Map<string, PenaltyRate>();
   for (const r of data as any[]) {
     const name = r.penalty_name ?? r.name ?? "Penalty";
-    const value = num(r.rate ?? r.multiplier ?? r.penalty_rate ?? r.percentage ?? r.value);
-    const entry = grouped.get(name) ?? { penalty_name: name, casual: null, permanent: null };
-    if (isCasual(r.employment_type ?? r.employee_type ?? r.type)) entry.casual = value;
-    else entry.permanent = value;
+    const label = penaltyTypeLabel(r.penalty_type ?? r.employment_type ?? r.employee_type ?? r.type);
+    const rate = num(r.rate ?? r.penalty_rate ?? r.hourly_rate ?? r.value);
+    const multiplier = num(r.multiplier ?? r.penalty_multiplier ?? r.percentage);
+    const entry: PenaltyRate = grouped.get(name) ?? { name, variants: [] };
+    entry.variants.push({ label, rate, multiplier });
     grouped.set(name, entry);
+  }
+  // Show the casual variant first within each penalty.
+  for (const entry of grouped.values()) {
+    entry.variants.sort((a, b) => (a.label === "Casual" ? -1 : b.label === "Casual" ? 1 : 0));
   }
   return [...grouped.values()];
 }
