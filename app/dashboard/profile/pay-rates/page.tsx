@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 import { createClient } from "@/lib/supabase";
+import AwardSelector from "@/components/AwardSelector";
+import AwardRateGuide from "@/components/AwardRateGuide";
 
 type Toast = { msg: string; ok: boolean };
 
@@ -12,6 +14,8 @@ export default function PayRatesPage() {
   const [weekday, setWeekday]       = useState("");
   const [weekend, setWeekend]       = useState("");
   const [pubHoliday, setPubHoliday] = useState("");
+  const [awardCode, setAwardCode]   = useState<string | null>(null);
+  const [showPenaltyRates, setShowPenaltyRates] = useState(false);
   const [dataLoading, setDataLoading] = useState(true);
   const [saving, setSaving]  = useState(false);
   const [toast, setToast]    = useState<Toast | null>(null);
@@ -19,20 +23,33 @@ export default function PayRatesPage() {
   useEffect(() => {
     if (!user) return;
     async function load() {
-      const { data } = await createClient()
-        .from("pay_rates")
-        .select("base_rate, saturday_rate, public_holiday_rate")
-        .eq("vendor_id", user!.id)
-        .maybeSingle();
+      const supabase = createClient();
+      const [rateRes, profRes] = await Promise.all([
+        supabase.from("pay_rates").select("base_rate, saturday_rate, public_holiday_rate, award_code").eq("vendor_id", user!.id).maybeSingle(),
+        supabase.from("promoter_profiles").select("show_penalty_rates").eq("user_id", user!.id).maybeSingle(),
+      ]);
+      const data = rateRes.data as { base_rate: number | null; saturday_rate: number | null; public_holiday_rate: number | null; award_code: string | null } | null;
       if (data) {
         if (data.base_rate           != null) setWeekday(String(data.base_rate));
         if (data.saturday_rate       != null) setWeekend(String(data.saturday_rate));
         if (data.public_holiday_rate != null) setPubHoliday(String(data.public_holiday_rate));
+        setAwardCode(data.award_code ?? null);
       }
+      setShowPenaltyRates((profRes.data as { show_penalty_rates: boolean } | null)?.show_penalty_rates === true);
       setDataLoading(false);
     }
     load();
   }, [user?.id]);
+
+  async function toggleShowPenaltyRates() {
+    if (!user) return;
+    const next = !showPenaltyRates;
+    setShowPenaltyRates(next);
+    await createClient()
+      .from("promoter_profiles")
+      .update({ show_penalty_rates: next })
+      .eq("user_id", user.id);
+  }
 
   function showToast(msg: string, ok: boolean) {
     setToast({ msg, ok });
@@ -56,6 +73,7 @@ export default function PayRatesPage() {
           saturday_rate:       wk,
           sunday_rate:         wk,
           public_holiday_rate: ph,
+          award_code:          awardCode,
         },
         { onConflict: "vendor_id" }
       );
@@ -123,6 +141,28 @@ export default function PayRatesPage() {
         </p>
 
         <form onSubmit={save} className="flex flex-col gap-4">
+          {/* Modern Award selection */}
+          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-5 py-4">
+            <p className="text-sm font-semibold text-white mb-1">Modern Award</p>
+            <p className="text-xs text-zinc-500 mb-3">Used to show FWC minimum rate guidelines.</p>
+            <AwardSelector value={awardCode} onChange={setAwardCode} accent="violet" />
+          </div>
+
+          {/* Show penalty rate breakdowns */}
+          <button
+            type="button"
+            onClick={toggleShowPenaltyRates}
+            className="flex items-center justify-between rounded-2xl border border-white/[0.06] bg-white/[0.02] px-5 py-4"
+          >
+            <div className="text-left">
+              <p className="text-sm font-semibold text-white">Show Penalty Rate Breakdowns</p>
+              <p className="text-xs text-zinc-500 mt-0.5">Display casual/permanent penalty rates in FWC guidelines.</p>
+            </div>
+            <span className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ml-3 ${showPenaltyRates ? "bg-violet-600" : "bg-white/[0.12]"}`}>
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${showPenaltyRates ? "translate-x-5" : ""}`} />
+            </span>
+          </button>
+
           {RATES.map(({ label, sub, value, setter, placeholder }) => (
             <div key={label} className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-5 py-4">
               <div className="mb-3">
@@ -144,6 +184,14 @@ export default function PayRatesPage() {
               </div>
             </div>
           ))}
+
+          {/* FWC guideline for the selected award + entered weekday rate */}
+          <AwardRateGuide
+            awardCode={awardCode}
+            enteredRate={weekday.trim() === "" ? null : parseFloat(weekday)}
+            showPenaltyRates={showPenaltyRates}
+            accent="violet"
+          />
 
           <button
             type="submit"

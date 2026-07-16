@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRequireVendorAuth } from "@/lib/useRequireVendorAuth";
 import { createClient } from "@/lib/supabase";
+import AwardRateGuide from "@/components/AwardRateGuide";
+import { awardCodeForName, calculateAge } from "@/lib/getAwardRates";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * NOTE: Several tables/columns used here are unverified against the DB (they are
@@ -118,6 +120,7 @@ type Member = {
   abn: string | null;
   abn_verified: boolean;
   abn_business_name: string | null;
+  date_of_birth: string | null;
 };
 type TeamRequest = { id: string; staff_id: string; full_name: string; username: string | null };
 
@@ -237,10 +240,20 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [reqBusy, setReqBusy] = useState<string | null>(null);
   const [payEditFor, setPayEditFor] = useState<string | null>(null);
+  const [vendorAwardCode, setVendorAwardCode] = useState<string | null>(null);
+  const [showPenaltyRates, setShowPenaltyRates] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     const supabase = createClient();
+
+    // Vendor-level FWC preferences: default award + penalty-breakdown toggle.
+    const [vendorRateRes, vendorProfRes] = await Promise.all([
+      supabase.from("pay_rates").select("award_code").eq("vendor_id", vendorId).maybeSingle(),
+      supabase.from("vendor_profiles").select("show_penalty_rates").eq("user_id", vendorId).maybeSingle(),
+    ]);
+    setVendorAwardCode((vendorRateRes.data as any)?.award_code ?? null);
+    setShowPenaltyRates((vendorProfRes.data as any)?.show_penalty_rates === true);
 
     const { data: svaRows } = await supabase.from("staff_vendor_assignments").select("*").eq("vendor_id", vendorId);
     const rows = (svaRows ?? []) as any[];
@@ -248,7 +261,7 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
 
     const [uRes, spRes, ratingRes, pinRes, shiftRes, payRes, reqRes, mgrRes] = await Promise.all([
       staffIds.length ? supabase.from("users").select("id, full_name").in("id", staffIds) : Promise.resolve({ data: [] as any[] }),
-      staffIds.length ? supabase.from("staff_profiles").select("user_id, username, abn, abn_verified, abn_business_name").in("user_id", staffIds) : Promise.resolve({ data: [] as any[] }),
+      staffIds.length ? supabase.from("staff_profiles").select("user_id, username, abn, abn_verified, abn_business_name, date_of_birth").in("user_id", staffIds) : Promise.resolve({ data: [] as any[] }),
       staffIds.length ? supabase.from("user_ratings_summary").select("user_id, average_stars").in("user_id", staffIds) : Promise.resolve({ data: [] as any[] }),
       supabase.from("vendor_staff_pins").select("staff_id, pin").eq("vendor_id", vendorId),
       supabase.from("shifts").select("staff_id").eq("vendor_id", vendorId).eq("status", "completed"),
@@ -289,6 +302,7 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
       abn: spByUser[r.staff_id]?.abn ?? null,
       abn_verified: spByUser[r.staff_id]?.abn_verified === true,
       abn_business_name: spByUser[r.staff_id]?.abn_business_name ?? null,
+      date_of_birth: spByUser[r.staff_id]?.date_of_birth ?? null,
     })));
 
     // Pending requests + names
@@ -492,7 +506,13 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
               </div>
 
               {payEditFor === m.staff_id && (
-                <PayOverrideEditor member={m} onSave={(rates) => savePayOverride(m, rates)} onCancel={() => setPayEditFor(null)} />
+                <PayOverrideEditor
+                  member={m}
+                  awardCode={awardCodeForName(m.award) ?? vendorAwardCode}
+                  showPenaltyRates={showPenaltyRates}
+                  onSave={(rates) => savePayOverride(m, rates)}
+                  onCancel={() => setPayEditFor(null)}
+                />
               )}
             </div>
           ))}
@@ -505,9 +525,16 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
   );
 }
 
-function PayOverrideEditor({ member, onSave, onCancel }: { member: Member; onSave: (rates: Member["rates"]) => void; onCancel: () => void }) {
+function PayOverrideEditor({ member, awardCode, showPenaltyRates, onSave, onCancel }: {
+  member: Member;
+  awardCode: string | null;
+  showPenaltyRates: boolean;
+  onSave: (rates: Member["rates"]) => void;
+  onCancel: () => void;
+}) {
   const [rates, setRates] = useState(member.rates);
   const fields: [keyof Member["rates"], string][] = [["weekday", "Weekday"], ["weekend", "Sat + Sun"], ["public_holiday", "Public Holiday"]];
+  const staffAge = calculateAge(member.date_of_birth);
   return (
     <div className="mt-3 rounded-lg border border-white/[0.06] bg-black/20 p-3">
       <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mb-2">Pay Rate Override ($/hr)</p>
@@ -519,6 +546,17 @@ function PayOverrideEditor({ member, onSave, onCancel }: { member: Member; onSav
               className="rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white outline-none focus:border-[#FF6B35] transition-colors [appearance:textfield]" />
           </div>
         ))}
+      </div>
+      {/* Age-based FWC guideline for this staff member */}
+      <div className="mt-3">
+        <AwardRateGuide
+          awardCode={awardCode}
+          staffAge={staffAge}
+          staffName={member.full_name}
+          enteredRate={rates.weekday.trim() === "" ? null : parseFloat(rates.weekday)}
+          showPenaltyRates={showPenaltyRates}
+          accent="orange"
+        />
       </div>
       <div className="flex gap-2 mt-3">
         <button onClick={() => onSave(rates)} className="rounded-md bg-[#FF6B35] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#ff7d4d] transition-colors">Save</button>

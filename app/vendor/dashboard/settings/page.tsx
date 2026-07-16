@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useRequireVendorAuth } from "@/lib/useRequireVendorAuth";
 import { createClient } from "@/lib/supabase";
+import AwardSelector from "@/components/AwardSelector";
+import AwardRateGuide from "@/components/AwardRateGuide";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 // vendor_subscriptions and the `create-portal-session` edge function are still
@@ -136,9 +138,13 @@ export default function VendorSettingsPage() {
 
   // Pay rates (single row)
   const [rates, setRates] = useState<PayRatesForm>({ base_rate: "", evening_rate: "", saturday_rate: "", sunday_rate: "", public_holiday_rate: "" });
+  const [awardCode, setAwardCode] = useState<string | null>(null);
   const [ratesLoaded, setRatesLoaded] = useState(false);
   const [ratesLoading, setRatesLoading] = useState(false);
   const [savingRates, setSavingRates] = useState(false);
+
+  // FWC penalty-rate breakdown preference (vendor_profiles.show_penalty_rates)
+  const [showPenaltyRates, setShowPenaltyRates] = useState(false);
 
   function showToast() {
     setToast(true);
@@ -153,7 +159,7 @@ export default function VendorSettingsPage() {
       /* eslint-disable @typescript-eslint/no-explicit-any */
       const { data } = await createClient()
         .from("vendor_profiles")
-        .select("business_name, abn, suburb, state, phone, description, approval_status, logo_url, onboarding_complete, square_connected, square_merchant_name, phone_verified, abn_verified, abn_business_name, gst_registered")
+        .select("business_name, abn, suburb, state, phone, description, approval_status, logo_url, onboarding_complete, square_connected, square_merchant_name, phone_verified, abn_verified, abn_business_name, gst_registered, show_penalty_rates")
         .eq("user_id", user!.id)
         .maybeSingle();
       const p = (data ?? {}) as any;
@@ -174,6 +180,7 @@ export default function VendorSettingsPage() {
       setAbnVerified(p.abn_verified === true);
       setAbnBusinessName(p.abn_business_name ?? null);
       setGstRegistered(p.gst_registered === true);
+      setShowPenaltyRates(p.show_penalty_rates === true);
       /* eslint-enable @typescript-eslint/no-explicit-any */
       setProfileLoading(false);
     }
@@ -211,7 +218,7 @@ export default function VendorSettingsPage() {
       /* eslint-disable @typescript-eslint/no-explicit-any */
       const { data } = await createClient()
         .from("pay_rates")
-        .select("base_rate, evening_rate, saturday_rate, sunday_rate, public_holiday_rate")
+        .select("base_rate, evening_rate, saturday_rate, sunday_rate, public_holiday_rate, award_code")
         .eq("vendor_id", user!.id)
         .maybeSingle();
       const r = (data ?? {}) as any;
@@ -223,6 +230,7 @@ export default function VendorSettingsPage() {
         sunday_rate: str(r.sunday_rate),
         public_holiday_rate: str(r.public_holiday_rate),
       });
+      setAwardCode(r.award_code ?? null);
       /* eslint-enable @typescript-eslint/no-explicit-any */
       setRatesLoaded(true);
       setRatesLoading(false);
@@ -311,11 +319,21 @@ export default function VendorSettingsPage() {
           saturday_rate: num(rates.saturday_rate),
           sunday_rate: num(rates.sunday_rate),
           public_holiday_rate: num(rates.public_holiday_rate),
+          award_code: awardCode,
         },
         { onConflict: "vendor_id" }
       );
     setSavingRates(false);
     showToast();
+  }
+
+  async function toggleShowPenaltyRates() {
+    const next = !showPenaltyRates;
+    setShowPenaltyRates(next);
+    await createClient()
+      .from("vendor_profiles")
+      .update({ show_penalty_rates: next })
+      .eq("user_id", user!.id);
   }
 
   async function openPortal() {
@@ -621,6 +639,28 @@ export default function VendorSettingsPage() {
         ) : (
           <div className="flex flex-col gap-5">
             <p className="text-xs text-zinc-500">Set the hourly rates applied to your staff&apos;s shifts.</p>
+
+            {/* Award selection */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Modern Award</label>
+              <AwardSelector value={awardCode} onChange={setAwardCode} accent="orange" />
+            </div>
+
+            {/* Show penalty rate breakdowns */}
+            <button
+              type="button"
+              onClick={toggleShowPenaltyRates}
+              className="flex items-center justify-between rounded-lg border border-white/[0.08] bg-white/[0.02] px-4 py-3"
+            >
+              <div className="text-left">
+                <p className="text-sm font-medium text-white">Show Penalty Rate Breakdowns</p>
+                <p className="text-xs text-zinc-500">Display casual/permanent penalty rates in FWC guidelines.</p>
+              </div>
+              <span className={`relative w-11 h-6 rounded-full transition-colors ${showPenaltyRates ? "bg-[#FF6B35]" : "bg-white/[0.12]"}`}>
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${showPenaltyRates ? "translate-x-5" : ""}`} />
+              </span>
+            </button>
+
             <div className="flex flex-col gap-4">
               <RateField label="Base Rate" value={rates.base_rate} onChange={(v) => setRates((p) => ({ ...p, base_rate: v }))} />
               <RateField label="Evening Rate" value={rates.evening_rate} onChange={(v) => setRates((p) => ({ ...p, evening_rate: v }))} />
@@ -628,6 +668,15 @@ export default function VendorSettingsPage() {
               <RateField label="Sunday Rate" value={rates.sunday_rate} onChange={(v) => setRates((p) => ({ ...p, sunday_rate: v }))} />
               <RateField label="Public Holiday Rate" value={rates.public_holiday_rate} onChange={(v) => setRates((p) => ({ ...p, public_holiday_rate: v }))} />
             </div>
+
+            {/* FWC guideline for the selected award + entered base rate */}
+            <AwardRateGuide
+              awardCode={awardCode}
+              enteredRate={rates.base_rate.trim() === "" ? null : parseFloat(rates.base_rate)}
+              showPenaltyRates={showPenaltyRates}
+              accent="orange"
+            />
+
             <button onClick={savePayRates} disabled={savingRates} className="self-start rounded-lg bg-[#FF6B35] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#ff7d4d] transition-colors disabled:opacity-50">
               {savingRates ? "Saving…" : "Save Pay Rates"}
             </button>

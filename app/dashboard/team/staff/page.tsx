@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 import { createClient } from "@/lib/supabase";
+import AwardRateGuide from "@/components/AwardRateGuide";
+import { calculateAge } from "@/lib/getAwardRates";
 
 type PromoterStaff = {
   id: string;
@@ -175,20 +177,28 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
   const [shiftCount, setShiftCount] = useState<number | null>(null);
   const [payRates, setPayRates] = useState<PayRateRow[]>([]);
   const [defaults, setDefaults] = useState<DefaultPayRate | null>(null);
+  const [awardCode, setAwardCode] = useState<string | null>(null);
+  const [staffAge, setStaffAge] = useState<number | null>(null);
+  const [showPenaltyRates, setShowPenaltyRates] = useState(false);
   const [editing, setEditing] = useState<{ type: string; value: string } | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     async function load() {
       const supabase = createClient();
-      const [shiftRes, ratesRes, defRes] = await Promise.all([
+      const [shiftRes, ratesRes, defRes, dobRes, profRes] = await Promise.all([
         supabase.from("shifts").select("id", { count: "exact", head: true }).eq("staff_id", staff.user_id),
         supabase.from("staff_pay_rates").select("rate_type, hourly_rate").eq("employer_id", promoterId).eq("staff_id", staff.user_id),
-        supabase.from("pay_rates").select("base_rate, saturday_rate, public_holiday_rate").eq("vendor_id", promoterId).maybeSingle(),
+        supabase.from("pay_rates").select("base_rate, saturday_rate, public_holiday_rate, award_code").eq("vendor_id", promoterId).maybeSingle(),
+        supabase.from("staff_profiles").select("date_of_birth").eq("user_id", staff.user_id).maybeSingle(),
+        supabase.from("promoter_profiles").select("show_penalty_rates").eq("user_id", promoterId).maybeSingle(),
       ]);
       setShiftCount(shiftRes.count ?? 0);
       setPayRates((ratesRes.data as PayRateRow[]) ?? []);
       setDefaults((defRes.data as DefaultPayRate | null) ?? null);
+      setAwardCode((defRes.data as { award_code: string | null } | null)?.award_code ?? null);
+      setStaffAge(calculateAge((dobRes.data as { date_of_birth: string | null } | null)?.date_of_birth));
+      setShowPenaltyRates((profRes.data as { show_penalty_rates: boolean } | null)?.show_penalty_rates === true);
     }
     load();
   }, [staff.user_id, promoterId]);
@@ -293,6 +303,18 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
                 </div>
               );
             })}
+          </div>
+
+          {/* Age-based FWC guideline for this staff member */}
+          <div className="mt-4">
+            <AwardRateGuide
+              awardCode={awardCode}
+              staffAge={staffAge}
+              staffName={staff.full_name}
+              enteredRate={rateMap["weekday"] ?? defaults?.base_rate ?? null}
+              showPenaltyRates={showPenaltyRates}
+              accent="violet"
+            />
           </div>
         </div>
       </div>
