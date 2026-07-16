@@ -168,18 +168,29 @@ export async function getAwardRateGuidelines(
 }
 
 // Distinct awards (code + name) across award_rates_live, sorted alphabetically
-// by name. Used to populate the "All Awards" group of the selector.
+// by name. A single Supabase request is capped (~1000 rows) server-side, so we
+// page through in 1000-row batches until a short page signals the end —
+// otherwise the "All Awards" list is silently truncated. Mirrors the mobile app.
 export async function getAllAwards(): Promise<AwardOption[]> {
-  const { data, error } = await createClient()
-    .from("award_rates_live")
-    .select("award_code, award_name");
-  if (error || !data) return [];
+  const supabase = createClient();
+  const PAGE = 1000;
   const byCode = new Map<string, string>();
-  for (const r of data as any[]) {
-    const code = r.award_code ?? r.code;
-    if (!code || byCode.has(code)) continue;
-    byCode.set(code, r.award_name ?? r.name ?? AWARD_CODES[code] ?? code);
+
+  for (let from = 0; from < 20000; from += PAGE) {
+    const { data, error } = await supabase
+      .from("award_rates_live")
+      .select("award_code, award_name")
+      .order("award_code", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error || !data || data.length === 0) break;
+    for (const r of data as any[]) {
+      const code = r.award_code ?? r.code;
+      if (!code || byCode.has(code)) continue;
+      byCode.set(code, r.award_name ?? r.name ?? AWARD_CODES[code] ?? code);
+    }
+    if (data.length < PAGE) break;
   }
+
   return [...byCode.entries()]
     .map(([code, name]) => ({ code, name }))
     .sort((a, b) => a.name.localeCompare(b.name));
