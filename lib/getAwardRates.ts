@@ -125,10 +125,16 @@ function penaltyTypeLabel(raw: any): string {
 
 // ── Queries ──────────────────────────────────────────────────────────────────
 
-// Top 5 FWC minimums for an award, cheapest classification first. `employeeType`
-// is accepted for API parity with mobile; junior figures are derived from these
-// adult base rates via getJuniorPercentage() in the UI (junior pay is age-based,
-// so it isn't stored as separate rows).
+// Top 5 FWC minimums for an award, cheapest classification first.
+//
+// IMPORTANT: award_rates_live carries a row per employee type (adult, junior,
+// apprentice, …). We must filter to `employee_type = 'adult'` — without it,
+// ordering by base_rate ascending surfaces junior/apprentice rows (a fraction
+// of the adult minimum), which is what caused rates to display as ~$0.92
+// instead of the real ~$27 adult minimum. `employeeType` is accepted for API
+// parity; adult base rates are always returned and junior figures are derived
+// in the UI via getJuniorPercentage() (junior rows aren't published for every
+// award), matching the mobile app.
 export async function getAwardRateGuidelines(
   awardCode: string,
   employeeType: "adult" | "junior" = "adult",
@@ -137,12 +143,28 @@ export async function getAwardRateGuidelines(
   void employeeType;
   const { data, error } = await createClient()
     .from("award_rates_live")
-    .select("*")
+    .select("classification_name, parent_classification_name, base_rate, employee_type, award_code, award_name")
     .eq("award_code", awardCode)
+    .eq("employee_type", "adult")
     .order("base_rate", { ascending: true })
-    .limit(5);
+    .limit(10);
   if (error || !data) return [];
-  return (data as any[]).map(normRate);
+
+  // award_rates_live can hold more than one row per classification (e.g. per
+  // parent classification / pay frequency). Dedupe by classification_name so
+  // each appears once, drop non-positive rows, then keep the 5 cheapest.
+  const seen = new Set<string>();
+  const out: AwardRate[] = [];
+  for (const raw of data as any[]) {
+    const r = normRate(raw);
+    if (!(r.base_rate > 0)) continue;
+    const key = r.classification.trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+    if (out.length >= 5) break;
+  }
+  return out;
 }
 
 // Distinct awards (code + name) across award_rates_live, sorted alphabetically
