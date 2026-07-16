@@ -90,6 +90,17 @@ export type PenaltyRate = {
   variants: PenaltyVariant[];
 };
 
+// Saturday / Sunday / Public-holiday penalty rows, one variant per FWC row.
+export type DayPenaltyVariant = {
+  label: string;        // the penalty_type text, e.g. "Adult casual"
+  rate: number | null;  // FWC calculated_rate ($/hr) — never multiplied
+  isCasual: boolean;    // penalty_type contains "casual"
+};
+export type DayPenalty = {
+  name: string;         // penalty_name, e.g. "Saturday"
+  variants: DayPenaltyVariant[];
+};
+
 export type Allowance = {
   name: string;
   rate: number | null;
@@ -224,6 +235,47 @@ export async function getPenaltyRates(awardCode: string): Promise<PenaltyRate[]>
     entry.variants.sort((a, b) => (a.label === "Casual" ? -1 : b.label === "Casual" ? 1 : 0));
   }
   return [...grouped.values()];
+}
+
+// Saturday / Sunday / Public-holiday penalty rates for an award, straight from
+// award_penalties_live. Grouped by penalty_name; each variant is one FWC row,
+// labelled by its penalty_type text (e.g. "Adult casual", "Casual managerial
+// (Hotels)") and carrying FWC's own calculated_rate ($/hr) — NEVER multiplied.
+// Casual vs permanent is derived from whether penalty_type contains "casual".
+export async function getDayPenaltyRates(awardCode: string): Promise<DayPenalty[]> {
+  if (!awardCode) return [];
+  const { data, error } = await createClient()
+    .from("award_penalties_live")
+    .select("*")
+    .eq("award_code", awardCode)
+    .or("penalty_name.ilike.%Saturday%,penalty_name.ilike.%Sunday%,penalty_name.ilike.%Public holiday%");
+  if (error || !data) return [];
+
+  const grouped = new Map<string, DayPenalty>();
+  for (const r of data as any[]) {
+    // Adult rows only — employee_rate_type_code is the age/apprentice axis
+    // (AD = adult), not the casual/permanent axis.
+    const ert = r.employee_rate_type_code;
+    if (ert && ert !== "AD") continue;
+    const rate = num(r.calculated_rate ?? r.penalty_calculated_value);
+    if (rate == null) continue;
+    const name = r.penalty_name ?? r.penalty_description ?? "Penalty";
+    const ptype = String(r.penalty_type ?? r.clause_description ?? "").trim();
+    const label = ptype || "Standard";
+    const isCasual = /casual/i.test(ptype);
+    const entry: DayPenalty = grouped.get(name) ?? { name, variants: [] };
+    if (!entry.variants.some((v) => v.label === label && v.rate === rate)) {
+      entry.variants.push({ label, rate, isCasual });
+    }
+    grouped.set(name, entry);
+  }
+  for (const e of grouped.values()) {
+    e.variants.sort((a, b) => (a.rate ?? 0) - (b.rate ?? 0));
+  }
+  // Present in a natural order: Saturday, Sunday, Public holiday, then the rest.
+  const rank = (n: string) =>
+    /saturday/i.test(n) ? 0 : /sunday/i.test(n) ? 1 : /public/i.test(n) ? 2 : 3;
+  return [...grouped.values()].sort((a, b) => rank(a.name) - rank(b.name));
 }
 
 // Allowances for an award. The FWC wage-allowances endpoint also returns rows

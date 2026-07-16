@@ -5,10 +5,12 @@ import {
   AWARD_CODES,
   getAllowances,
   getAwardRateGuidelines,
+  getDayPenaltyRates,
   getJuniorPercentage,
   getPenaltyRates,
   type Allowance,
   type AwardRate,
+  type DayPenalty,
   type PenaltyRate,
   type PenaltyVariant,
 } from "@/lib/getAwardRates";
@@ -38,6 +40,7 @@ export default function AwardRateGuide({
 }) {
   const [rates, setRates] = useState<AwardRate[]>([]);
   const [penalties, setPenalties] = useState<PenaltyRate[]>([]);
+  const [dayPenalties, setDayPenalties] = useState<DayPenalty[]>([]);
   const [allowances, setAllowances] = useState<Allowance[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -58,11 +61,13 @@ export default function AwardRateGuide({
       getAwardRateGuidelines(awardCode, isJunior ? "junior" : "adult"),
       showPenaltyRates ? getPenaltyRates(awardCode) : Promise.resolve([] as PenaltyRate[]),
       getAllowances(awardCode),
-    ]).then(([r, p, a]) => {
+      getDayPenaltyRates(awardCode),
+    ]).then(([r, p, a, d]) => {
       if (cancelled) return;
       setRates(r);
       setPenalties(p);
       setAllowances(a);
+      setDayPenalties(d);
       setLoading(false);
     });
     return () => { cancelled = true; };
@@ -76,14 +81,11 @@ export default function AwardRateGuide({
     );
   }
 
-  // Displayed hourly rate: adult base → junior-scaled (when the staffer is a
-  // junior) → +25% casual loading (when the casual employment type is selected).
-  // The compliance check below compares the entered rate against this same
-  // casual-loaded minimum, so casual staff are held to the loaded floor.
-  const CASUAL_LOADING = 1.25;
+  // Displayed base hourly rate: adult minimum, junior-scaled when the staffer is
+  // a junior. No casual multiplier — casual/weekend/PH loadings are shown as the
+  // actual FWC penalty rows below (see DayRatesSection), never multiplied.
   const isCasual = employmentType === "casual";
-  const casualMult = isCasual ? CASUAL_LOADING : 1;
-  const displayRate = (base: number) => base * juniorPct * casualMult;
+  const displayRate = (base: number) => base * juniorPct;
   const lowestMinimum = rates.length > 0 ? Math.min(...rates.map((r) => displayRate(r.base_rate))) : null;
 
   // Header note describing which rate basis is shown.
@@ -124,7 +126,7 @@ export default function AwardRateGuide({
                   ${displayRate(r.base_rate).toFixed(2)}/hr
                   {isJunior && (
                     <span className="text-[11px] font-normal text-zinc-600 ml-1">
-                      (adult ${(r.base_rate * casualMult).toFixed(2)})
+                      (adult ${r.base_rate.toFixed(2)})
                     </span>
                   )}
                 </span>
@@ -132,25 +134,9 @@ export default function AwardRateGuide({
             ))}
           </div>
 
-          {/* Employment-type note: casual loading vs. shared permanent base */}
-          {isCasual ? (
-            <p className={`text-[11px] ${accentText}`}>
-              Casual rate includes 25% loading per Fair Work Act casual provisions.{" "}
-              <a
-                href="https://www.fairwork.gov.au/employment-conditions/types-of-employees/casual-employees"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline hover:opacity-80"
-              >
-                Learn more
-              </a>
-            </p>
-          ) : (
-            <p className="text-[11px] text-zinc-500">
-              Part-time and full-time rates are the same base rate. Casual employees receive an
-              additional 25% loading.
-            </p>
-          )}
+          {/* Saturday / Sunday / Public-holiday rates — actual FWC penalty rows,
+              filtered to the selected casual/permanent basis */}
+          <DayRatesSection days={dayPenalties} isCasual={isCasual} accentText={accentText} />
 
           {/* Entered-rate compliance check — only for a positive rate that has
               actually been entered (0 / blank is treated as "not entered"). */}
@@ -167,8 +153,12 @@ export default function AwardRateGuide({
             )
           )}
 
-          {/* Penalty rates (opt-in) — hidden entirely when there are none */}
-          {showPenaltyRates && <PenaltySection penalties={penalties} />}
+          {/* Other penalty rates (opt-in) — Sat/Sun/PH are shown separately above */}
+          {showPenaltyRates && (
+            <PenaltySection
+              penalties={penalties.filter((p) => !/saturday|sunday|public holiday/i.test(p.name))}
+            />
+          )}
 
           {/* Allowances — hidden entirely when there are none */}
           <AllowancesSection allowances={allowances} />
@@ -176,6 +166,59 @@ export default function AwardRateGuide({
       )}
 
       <p className="text-[11px] text-zinc-600">Source: Fair Work Commission, effective 1 July 2026</p>
+    </div>
+  );
+}
+
+// Saturday / Sunday / Public-holiday rates, read straight from FWC penalty rows.
+// Variants are filtered to the selected casual/permanent basis; the dollar
+// figures are FWC's own calculated_rate — never multiplied by a loading factor.
+function DayRatesSection({
+  days,
+  isCasual,
+  accentText,
+}: {
+  days: DayPenalty[];
+  isCasual: boolean;
+  accentText: string;
+}) {
+  const [open, setOpen] = useState(true);
+  const filtered = days
+    .map((d) => ({ name: d.name, variants: d.variants.filter((v) => v.isCasual === isCasual) }))
+    .filter((d) => d.variants.length > 0);
+  if (filtered.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-white/[0.06] overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-white/[0.03] transition-colors"
+      >
+        <span>Weekend &amp; Public Holiday Rates</span>
+        <span className="text-zinc-600">{open ? "−" : "+"}</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-2 flex flex-col gap-2">
+          {filtered.map((d, i) => (
+            <div key={`${d.name}-${i}`} className="flex flex-col gap-0.5">
+              <span className="text-xs font-medium text-zinc-300">{d.name}</span>
+              <div className="flex flex-col gap-0.5">
+                {d.variants.map((v, j) => (
+                  <span key={`${v.label}-${j}`} className="text-xs text-zinc-400">
+                    {v.label}:{" "}
+                    <span className="text-zinc-200">{v.rate != null ? `$${v.rate.toFixed(2)}/hr` : "—"}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+          <p className={`text-[11px] mt-1 ${isCasual ? accentText : "text-zinc-600"}`}>
+            {isCasual
+              ? "FWC casual penalty rates — these already include the 25% casual loading (no extra multiplier applied)."
+              : "FWC permanent (full-time / part-time) penalty rates."}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
