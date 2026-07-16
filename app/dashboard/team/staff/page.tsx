@@ -169,6 +169,13 @@ const RATE_TYPES = [
   { key: "public_holiday", label: "Public Holiday Rate", defKey: "public_holiday_rate" as keyof DefaultPayRate },
 ];
 
+type EmploymentType = "casual" | "part-time" | "full-time";
+const EMPLOYMENT_TYPE_OPTIONS: [EmploymentType, string][] = [
+  ["casual", "Casual"],
+  ["part-time", "Part-time"],
+  ["full-time", "Full-time"],
+];
+
 function StaffDetailModal({ staff, promoterId, onClose }: {
   staff: PromoterStaff;
   promoterId: string;
@@ -180,6 +187,7 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
   const [awardCode, setAwardCode] = useState<string | null>(null);
   const [staffAge, setStaffAge] = useState<number | null>(null);
   const [showPenaltyRates, setShowPenaltyRates] = useState(false);
+  const [employmentType, setEmploymentType] = useState<EmploymentType>("full-time");
   const [editing, setEditing] = useState<{ type: string; value: string } | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -305,14 +313,34 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
             })}
           </div>
 
+          {/* Employment type — drives the casual 25% loading in the guide */}
+          <div className="mt-4 flex items-center gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Employment</span>
+            <div className="flex items-center gap-1.5">
+              {EMPLOYMENT_TYPE_OPTIONS.map(([val, lbl]) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setEmploymentType(val)}
+                  className={`rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                    employmentType === val ? "bg-violet-600 text-white" : "border border-white/[0.12] text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Age-based FWC guideline for this staff member */}
-          <div className="mt-4">
+          <div className="mt-3">
             <AwardRateGuide
               awardCode={awardCode}
               staffAge={staffAge}
               staffName={staff.full_name}
               enteredRate={rateMap["weekday"] ?? defaults?.base_rate ?? null}
               showPenaltyRates={showPenaltyRates}
+              employmentType={employmentType}
               accent="violet"
             />
           </div>

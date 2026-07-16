@@ -25,6 +25,7 @@ export default function AwardRateGuide({
   staffName = null,
   enteredRate = null,
   showPenaltyRates = false,
+  employmentType = "full-time",
   accent = "orange",
 }: {
   awardCode: string | null;
@@ -32,6 +33,7 @@ export default function AwardRateGuide({
   staffName?: string | null;
   enteredRate?: number | null;
   showPenaltyRates?: boolean;
+  employmentType?: "casual" | "part-time" | "full-time";
   accent?: "orange" | "violet";
 }) {
   const [rates, setRates] = useState<AwardRate[]>([]);
@@ -74,9 +76,15 @@ export default function AwardRateGuide({
     );
   }
 
-  // Rate applied to display + the min-rate comparison, junior-scaled when relevant.
-  const applied = (base: number) => base * juniorPct;
-  const lowestMinimum = rates.length > 0 ? Math.min(...rates.map((r) => applied(r.base_rate))) : null;
+  // Displayed hourly rate: adult base → junior-scaled (when the staffer is a
+  // junior) → +25% casual loading (when the casual employment type is selected).
+  // The compliance check below compares the entered rate against this same
+  // casual-loaded minimum, so casual staff are held to the loaded floor.
+  const CASUAL_LOADING = 1.25;
+  const isCasual = employmentType === "casual";
+  const casualMult = isCasual ? CASUAL_LOADING : 1;
+  const displayRate = (base: number) => base * juniorPct * casualMult;
+  const lowestMinimum = rates.length > 0 ? Math.min(...rates.map((r) => displayRate(r.base_rate))) : null;
 
   // Header note describing which rate basis is shown.
   const ageNote = (() => {
@@ -113,16 +121,36 @@ export default function AwardRateGuide({
               <div key={`${r.classification}-${i}`} className="flex items-center justify-between px-3 py-2">
                 <span className="text-xs text-zinc-400 truncate mr-3">{r.classification}</span>
                 <span className="text-sm font-semibold text-white shrink-0">
-                  ${applied(r.base_rate).toFixed(2)}/hr
+                  ${displayRate(r.base_rate).toFixed(2)}/hr
                   {isJunior && (
                     <span className="text-[11px] font-normal text-zinc-600 ml-1">
-                      (adult ${r.base_rate.toFixed(2)})
+                      (adult ${(r.base_rate * casualMult).toFixed(2)})
                     </span>
                   )}
                 </span>
               </div>
             ))}
           </div>
+
+          {/* Employment-type note: casual loading vs. shared permanent base */}
+          {isCasual ? (
+            <p className={`text-[11px] ${accentText}`}>
+              Casual rate includes 25% loading per Fair Work Act casual provisions.{" "}
+              <a
+                href="https://www.fairwork.gov.au/employment-conditions/types-of-employees/casual-employees"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:opacity-80"
+              >
+                Learn more
+              </a>
+            </p>
+          ) : (
+            <p className="text-[11px] text-zinc-500">
+              Part-time and full-time rates are the same base rate. Casual employees receive an
+              additional 25% loading.
+            </p>
+          )}
 
           {/* Entered-rate compliance check — only for a positive rate that has
               actually been entered (0 / blank is treated as "not entered"). */}

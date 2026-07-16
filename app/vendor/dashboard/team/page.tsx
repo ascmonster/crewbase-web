@@ -82,6 +82,14 @@ function Skeleton({ count = 4 }: { count?: number }) {
 
 const AWARD_OPTIONS = ["Hospitality", "Restaurant", "Fast Food", "Retail", "Events"];
 const EMPLOYMENT_TYPES: [string, string][] = [["casual", "Casual"], ["part_time", "Part-time"], ["full_time", "Full-time"]];
+
+// Map the stored employment_type ("part_time") to the AwardRateGuide prop
+// ("part-time"). Anything unset falls back to full-time (no casual loading).
+function toEmploymentType(v: string | null): "casual" | "part-time" | "full-time" {
+  if (v === "casual") return "casual";
+  if (v === "part_time" || v === "part-time") return "part-time";
+  return "full-time";
+}
 const AWARD_MULTIPLIERS = { weekday: 1.0, saturday: 1.25, sunday: 1.75, public_holiday: 2.25, late_night: 1.15 };
 
 // Multiplier + penalty label for a shift date/time. Public holidays aren't
@@ -555,6 +563,7 @@ function PayOverrideEditor({ member, awardCode, showPenaltyRates, onSave, onCanc
           staffName={member.full_name}
           enteredRate={rates.weekday.trim() === "" ? null : parseFloat(rates.weekday)}
           showPenaltyRates={showPenaltyRates}
+          employmentType={toEmploymentType(member.employment_type)}
           accent="orange"
         />
       </div>
