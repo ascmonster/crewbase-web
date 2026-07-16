@@ -96,7 +96,7 @@ const NAV = [
   { href: "/vendor/dashboard/events",    label: "Events",    Icon: CalendarIcon,  exact: false },
   { href: "/vendor/dashboard/team",      label: "Team",      Icon: UsersIcon,     exact: false },
   { href: "/vendor/dashboard/jobs",      label: "Jobs",      Icon: BriefcaseIcon, exact: false },
-  { href: "/vendor/dashboard/documents", label: "Documents", Icon: FileIcon,      exact: false },
+  { href: "/vendor/dashboard/documents", label: "Digital Forms", Icon: FileIcon,  exact: false },
   { href: "/vendor/dashboard/trucks",    label: "Trucks",    Icon: TruckIcon,     exact: false },
   { href: "/vendor/dashboard/analytics", label: "Analytics", Icon: BarChartIcon,  exact: false },
   { href: "/vendor/dashboard/settings",  label: "Settings",  Icon: SettingsIcon,  exact: false },

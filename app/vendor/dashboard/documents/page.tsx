@@ -387,7 +387,7 @@ export default function VendorDocumentsPage() {
     <div className="max-w-3xl mx-auto px-5 py-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-bold text-white">Documents</h1>
+        <h1 className="text-xl font-bold text-white">Digital Forms</h1>
         {(activeTab === "my" || activeTab === "business") && (
           <button
             onClick={() => setUploadTarget(activeTab)}
@@ -401,7 +401,7 @@ export default function VendorDocumentsPage() {
 
       {/* Tabs */}
       <div className="flex gap-0 mb-6 border-b border-white/[0.06] overflow-x-auto scrollbar-none">
-        {([["my", "My Documents"], ["business", "Business Docs"], ["requests", "Event Requests"]] as [Tab, string][]).map(([key, label]) => (
+        {([["my", "My Forms"], ["business", "Business Docs"], ["requests", "Event Requests"]] as [Tab, string][]).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setActiveTab(key)}
