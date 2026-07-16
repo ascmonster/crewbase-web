@@ -221,6 +221,15 @@ function PenaltySection({ penalties }: { penalties: PenaltyRate[] }) {
   );
 }
 
+// Format an allowance value: percentage allowances show "5.6%", dollar
+// allowances show "$X.XX"; the descriptive unit (if any) is appended.
+function fmtAllowance(a: Allowance): string {
+  if (a.rate == null) return "—";
+  const isPercent = (a.rateType ?? "").toLowerCase() === "percent";
+  const val = isPercent ? `${a.rate}%` : `$${a.rate.toFixed(2)}`;
+  return a.unit ? `${val} ${a.unit}` : val;
+}
+
 function AllowancesSection({ allowances }: { allowances: Allowance[] }) {
   const [open, setOpen] = useState(false);
   if (!allowances || allowances.length === 0) return null;
@@ -237,14 +246,15 @@ function AllowancesSection({ allowances }: { allowances: Allowance[] }) {
       {open && (
         <div className="px-3 pb-2 flex flex-col gap-1.5">
           {allowances.map((a, i) => (
-            <div key={`${a.allowance_name}-${i}`} className="flex items-center justify-between text-xs">
-              <span className="text-zinc-400 truncate mr-3">{a.allowance_name}</span>
-              <span className="text-zinc-200 shrink-0">
-                {a.amount != null ? `$${a.amount.toFixed(2)}` : "—"}
-                {a.unit ? ` ${a.unit}` : ""}
-              </span>
+            <div key={`${a.name}-${i}`} className="flex flex-col gap-0.5">
+              <span className="text-xs font-medium text-zinc-300">{a.name}</span>
+              <span className="text-xs text-zinc-400">{fmtAllowance(a)}</span>
             </div>
           ))}
+          <p className="text-[11px] text-zinc-600 mt-1">
+            Percentage allowances are calculated as a % of the award standard rate. See Fair Work for
+            details.
+          </p>
         </div>
       )}
     </div>

@@ -91,9 +91,10 @@ export type PenaltyRate = {
 };
 
 export type Allowance = {
-  allowance_name: string;
-  amount: number | null;
-  unit: string | null;
+  name: string;
+  rate: number | null;
+  rateType: string | null; // 'Percent' | 'Hourly' | 'Weekly' | 'Daily' | …
+  unit: string | null;     // descriptive per-unit text (from allowance_type)
 };
 
 // ── Normalizers ──────────────────────────────────────────────────────────────
@@ -225,7 +226,10 @@ export async function getPenaltyRates(awardCode: string): Promise<PenaltyRate[]>
   return [...grouped.values()];
 }
 
-// Allowances for an award.
+// Allowances for an award. The FWC wage-allowances endpoint also returns rows
+// that aren't true allowances — penalty rows (name starts with "Penalty") and
+// classification rows (Level N / Introductory / Grade N) — so we filter those
+// out. `rate` may be a dollar amount OR a percentage; `rateType` says which.
 export async function getAllowances(awardCode: string): Promise<Allowance[]> {
   if (!awardCode) return [];
   const { data, error } = await createClient()
@@ -233,9 +237,13 @@ export async function getAllowances(awardCode: string): Promise<Allowance[]> {
     .select("*")
     .eq("award_code", awardCode);
   if (error || !data) return [];
-  return (data as any[]).map((r) => ({
-    allowance_name: r.allowance_name ?? r.name ?? "Allowance",
-    amount: num(r.amount ?? r.rate ?? r.value),
-    unit: r.unit ?? r.per ?? null,
-  }));
+  const CLASSIFICATION_RE = /^(Level \d|Introductory|Grade \d)/i;
+  return (data as any[])
+    .map((r) => ({
+      name: r.allowance_name ?? r.name ?? "Allowance",
+      rate: num(r.calculated_rate ?? r.amount ?? r.rate ?? r.value),
+      rateType: r.calculated_rate_type ?? r.rate_type ?? null,
+      unit: r.allowance_type ?? r.unit ?? r.per ?? null,
+    }))
+    .filter((a) => !/^Penalty/i.test(a.name) && !CLASSIFICATION_RE.test(a.name));
 }
