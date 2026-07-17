@@ -135,6 +135,15 @@ function penaltyTypeLabel(raw: any): string {
   return s.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// Trim a penalty_type label at the em-dash / en-dash — FWC appends boilerplate
+// after it (e.g. "Casual adult employees—ordinary and penalty rates" →
+// "Casual adult employees"). Only the em/en dash is cut, never the hyphen in
+// "full-time"/"part-time". Mirrors the mobile penaltyLabel() cleanup.
+function cleanPenaltyLabel(typeText: any): string {
+  const s = String(typeText ?? "").split(/[—–]/)[0].trim().replace(/\s+/g, " ");
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : "Standard";
+}
+
 // ── Queries ──────────────────────────────────────────────────────────────────
 
 // Top 5 FWC minimums for an award, cheapest classification first.
@@ -261,7 +270,9 @@ export async function getDayPenaltyRates(awardCode: string): Promise<DayPenalty[
     if (rate == null) continue;
     const name = r.penalty_name ?? r.penalty_description ?? "Penalty";
     const ptype = String(r.penalty_type ?? r.clause_description ?? "").trim();
-    const label = ptype || "Standard";
+    // Clean the label BEFORE using it as the dedup key so rows that differ only
+    // in the trimmed boilerplate collapse into one variant.
+    const label = cleanPenaltyLabel(ptype);
     const isCasual = /casual/i.test(ptype);
     const entry: DayPenalty = grouped.get(name) ?? { name, variants: [] };
     if (!entry.variants.some((v) => v.label === label && v.rate === rate)) {
