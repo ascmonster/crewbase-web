@@ -475,8 +475,10 @@ export default function StaffPage() {
                   {s.username && <p className="text-xs text-zinc-500">@{s.username}</p>}
                   <Stars rating={s.avg_stars} />
                 </div>
+                {/* promoter_staff.status is 'pending' (invited) or 'active' (accepted) —
+                    'accepted' was never a stored value, so active staff fell through to grey. */}
                 <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold shrink-0 ${
-                  s.status === "accepted" ? "bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/20"
+                  s.status === "active" ? "bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/20"
                   : s.status === "pending" ? "bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/20"
                   : "bg-zinc-500/10 text-zinc-400 ring-1 ring-zinc-500/20"
                 }`}>
