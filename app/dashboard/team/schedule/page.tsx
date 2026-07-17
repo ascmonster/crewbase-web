@@ -224,8 +224,10 @@ export default function SchedulePage() {
       const { data } = await supabase
         .from("promoter_staff")
         .select("user_id")
+        // promoter_staff.status is 'pending' or 'active' — 'accepted' was never a
+        // stored value, so the picker returned no staff.
         .eq("promoter_id", user!.id)
-        .eq("status", "accepted");
+        .eq("status", "active");
       const userIds = ((data ?? []) as { user_id: string }[]).map((r) => r.user_id);
       if (userIds.length === 0) return;
       const { data: sp } = await supabase
