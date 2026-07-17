@@ -176,6 +176,19 @@ const EMPLOYMENT_TYPE_OPTIONS: [EmploymentType, string][] = [
   ["full-time", "Full-time"],
 ];
 
+// promoter_staff.employment_type stores underscored values; the chips use
+// hyphenated ones. Map between them and fall back to 'casual' when unset.
+const EMP_TO_DB: Record<EmploymentType, string> = {
+  casual: "casual",
+  "part-time": "part_time",
+  "full-time": "full_time",
+};
+function empFromDb(v: string | null | undefined): EmploymentType {
+  if (v === "part_time" || v === "part-time") return "part-time";
+  if (v === "full_time" || v === "full-time") return "full-time";
+  return "casual";
+}
+
 function StaffDetailModal({ staff, promoterId, onClose }: {
   staff: PromoterStaff;
   promoterId: string;
@@ -187,19 +200,20 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
   const [awardCode, setAwardCode] = useState<string | null>(null);
   const [staffAge, setStaffAge] = useState<number | null>(null);
   const [showPenaltyRates, setShowPenaltyRates] = useState(false);
-  const [employmentType, setEmploymentType] = useState<EmploymentType>("full-time");
+  const [employmentType, setEmploymentType] = useState<EmploymentType>("casual");
   const [editing, setEditing] = useState<{ type: string; value: string } | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     async function load() {
       const supabase = createClient();
-      const [shiftRes, ratesRes, defRes, dobRes, profRes] = await Promise.all([
+      const [shiftRes, ratesRes, defRes, dobRes, profRes, psRes] = await Promise.all([
         supabase.from("shifts").select("id", { count: "exact", head: true }).eq("staff_id", staff.user_id),
         supabase.from("staff_pay_rates").select("rate_type, hourly_rate").eq("employer_id", promoterId).eq("staff_id", staff.user_id),
         supabase.from("pay_rates").select("base_rate, saturday_rate, public_holiday_rate, award_code").eq("vendor_id", promoterId).maybeSingle(),
         supabase.from("staff_profiles").select("date_of_birth").eq("user_id", staff.user_id).maybeSingle(),
         supabase.from("promoter_profiles").select("show_penalty_rates").eq("user_id", promoterId).maybeSingle(),
+        supabase.from("promoter_staff").select("employment_type").eq("id", staff.id).maybeSingle(),
       ]);
       setShiftCount(shiftRes.count ?? 0);
       setPayRates((ratesRes.data as PayRateRow[]) ?? []);
@@ -207,9 +221,10 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
       setAwardCode((defRes.data as { award_code: string | null } | null)?.award_code ?? null);
       setStaffAge(calculateAge((dobRes.data as { date_of_birth: string | null } | null)?.date_of_birth));
       setShowPenaltyRates((profRes.data as { show_penalty_rates: boolean } | null)?.show_penalty_rates === true);
+      setEmploymentType(empFromDb((psRes.data as { employment_type: string | null } | null)?.employment_type));
     }
     load();
-  }, [staff.user_id, promoterId]);
+  }, [staff.user_id, promoterId, staff.id]);
 
   const rateMap = Object.fromEntries(payRates.map((r) => [r.rate_type, r.hourly_rate]));
 
@@ -229,6 +244,16 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
   async function clearRate(rateType: string) {
     await createClient().from("staff_pay_rates").delete().eq("employer_id", promoterId).eq("staff_id", staff.user_id).eq("rate_type", rateType);
     setPayRates((prev) => prev.filter((r) => r.rate_type !== rateType));
+  }
+
+  // Persist the employment type to promoter_staff. The row already exists (staff
+  // was invited), so this is an update keyed by the promoter_staff row id.
+  async function changeEmploymentType(next: EmploymentType) {
+    setEmploymentType(next);
+    await createClient()
+      .from("promoter_staff")
+      .update({ employment_type: EMP_TO_DB[next] })
+      .eq("id", staff.id);
   }
 
   return (
@@ -321,7 +346,7 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
                 <button
                   key={val}
                   type="button"
-                  onClick={() => setEmploymentType(val)}
+                  onClick={() => changeEmploymentType(val)}
                   className={`rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors ${
                     employmentType === val ? "bg-violet-600 text-white" : "border border-white/[0.12] text-zinc-400 hover:text-white"
                   }`}
