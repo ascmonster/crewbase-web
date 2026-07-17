@@ -170,6 +170,15 @@ export default function AwardRateGuide({
   );
 }
 
+// Trim a penalty_type label at the em-dash / en-dash — FWC appends boilerplate
+// after it (e.g. "Casual adult employees—ordinary and penalty rates" →
+// "Casual adult employees"). Only the em/en dash is cut, never the hyphen in
+// "full-time"/"part-time". Matches the mobile penaltyLabel() cleanup.
+function cleanPenaltyLabel(label: string): string {
+  const s = String(label ?? "").split(/[—–]/)[0].trim().replace(/\s+/g, " ");
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : label;
+}
+
 // Saturday / Sunday / Public-holiday rates, read straight from FWC penalty rows.
 // Variants are filtered to the selected casual/permanent basis; the dollar
 // figures are FWC's own calculated_rate — never multiplied by a loading factor.
@@ -205,7 +214,7 @@ function DayRatesSection({
               <div className="flex flex-col gap-0.5">
                 {d.variants.map((v, j) => (
                   <span key={`${v.label}-${j}`} className="text-xs text-zinc-400">
-                    {v.label}:{" "}
+                    {cleanPenaltyLabel(v.label)}:{" "}
                     <span className="text-zinc-200">{v.rate != null ? `$${v.rate.toFixed(2)}/hr` : "—"}</span>
                   </span>
                 ))}
