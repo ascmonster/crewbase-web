@@ -29,6 +29,21 @@ type PayRatesForm = {
   public_holiday_rate: string;
 };
 
+// Default employment type — persisted on pay_rates.employment_type. The chips
+// use hyphenated values; the DB stores underscored ones.
+type EmploymentType = "casual" | "part-time" | "full-time";
+const EMPLOYMENT_TYPE_OPTIONS: [EmploymentType, string][] = [
+  ["casual", "Casual"],
+  ["part-time", "Part-time"],
+  ["full-time", "Full-time"],
+];
+const EMP_TO_DB: Record<EmploymentType, string> = { casual: "casual", "part-time": "part_time", "full-time": "full_time" };
+function empFromDb(v: string | null | undefined): EmploymentType {
+  if (v === "part_time" || v === "part-time") return "part-time";
+  if (v === "full_time" || v === "full-time") return "full-time";
+  return "casual";
+}
+
 type Subscription = {
   status: string;
   current_period_end: string | null;
@@ -139,6 +154,7 @@ export default function VendorSettingsPage() {
   // Pay rates (single row)
   const [rates, setRates] = useState<PayRatesForm>({ base_rate: "", evening_rate: "", saturday_rate: "", sunday_rate: "", public_holiday_rate: "" });
   const [awardCode, setAwardCode] = useState<string | null>(null);
+  const [employmentType, setEmploymentType] = useState<EmploymentType>("casual");
   const [ratesLoaded, setRatesLoaded] = useState(false);
   const [ratesLoading, setRatesLoading] = useState(false);
   const [savingRates, setSavingRates] = useState(false);
@@ -218,7 +234,7 @@ export default function VendorSettingsPage() {
       /* eslint-disable @typescript-eslint/no-explicit-any */
       const { data } = await createClient()
         .from("pay_rates")
-        .select("base_rate, evening_rate, saturday_rate, sunday_rate, public_holiday_rate, award_code")
+        .select("base_rate, evening_rate, saturday_rate, sunday_rate, public_holiday_rate, award_code, employment_type")
         .eq("vendor_id", user!.id)
         .maybeSingle();
       const r = (data ?? {}) as any;
@@ -231,6 +247,7 @@ export default function VendorSettingsPage() {
         public_holiday_rate: str(r.public_holiday_rate),
       });
       setAwardCode(r.award_code ?? null);
+      setEmploymentType(empFromDb(r.employment_type));
       /* eslint-enable @typescript-eslint/no-explicit-any */
       setRatesLoaded(true);
       setRatesLoading(false);
@@ -320,6 +337,7 @@ export default function VendorSettingsPage() {
           sunday_rate: num(rates.sunday_rate),
           public_holiday_rate: num(rates.public_holiday_rate),
           award_code: awardCode,
+          employment_type: EMP_TO_DB[employmentType],
         },
         { onConflict: "vendor_id" }
       );
@@ -660,6 +678,25 @@ export default function VendorSettingsPage() {
                 <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${showPenaltyRates ? "translate-x-5" : ""}`} />
               </span>
             </button>
+
+            {/* Default employment type — persisted to pay_rates.employment_type */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Default Employment Type</label>
+              <div className="flex items-center gap-1.5">
+                {EMPLOYMENT_TYPE_OPTIONS.map(([val, lbl]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => setEmploymentType(val)}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                      employmentType === val ? "bg-[#FF6B35] text-white" : "border border-white/[0.12] text-zinc-400 hover:text-white"
+                    }`}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             <div className="flex flex-col gap-4">
               <RateField label="Base Rate" value={rates.base_rate} onChange={(v) => setRates((p) => ({ ...p, base_rate: v }))} />

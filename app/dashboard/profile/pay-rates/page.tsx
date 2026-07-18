@@ -9,12 +9,28 @@ import AwardRateGuide from "@/components/AwardRateGuide";
 
 type Toast = { msg: string; ok: boolean };
 
+// Default employment type — persisted on pay_rates.employment_type. The chips
+// use hyphenated values; the DB stores underscored ones.
+type EmploymentType = "casual" | "part-time" | "full-time";
+const EMPLOYMENT_TYPE_OPTIONS: [EmploymentType, string][] = [
+  ["casual", "Casual"],
+  ["part-time", "Part-time"],
+  ["full-time", "Full-time"],
+];
+const EMP_TO_DB: Record<EmploymentType, string> = { casual: "casual", "part-time": "part_time", "full-time": "full_time" };
+function empFromDb(v: string | null | undefined): EmploymentType {
+  if (v === "part_time" || v === "part-time") return "part-time";
+  if (v === "full_time" || v === "full-time") return "full-time";
+  return "casual";
+}
+
 export default function PayRatesPage() {
   const { user, loading: authLoading } = useRequireAuth();
   const [weekday, setWeekday]       = useState("");
   const [weekend, setWeekend]       = useState("");
   const [pubHoliday, setPubHoliday] = useState("");
   const [awardCode, setAwardCode]   = useState<string | null>(null);
+  const [employmentType, setEmploymentType] = useState<EmploymentType>("casual");
   const [showPenaltyRates, setShowPenaltyRates] = useState(false);
   const [dataLoading, setDataLoading] = useState(true);
   const [saving, setSaving]  = useState(false);
@@ -25,15 +41,16 @@ export default function PayRatesPage() {
     async function load() {
       const supabase = createClient();
       const [rateRes, profRes] = await Promise.all([
-        supabase.from("pay_rates").select("base_rate, saturday_rate, public_holiday_rate, award_code").eq("vendor_id", user!.id).maybeSingle(),
+        supabase.from("pay_rates").select("base_rate, saturday_rate, public_holiday_rate, award_code, employment_type").eq("vendor_id", user!.id).maybeSingle(),
         supabase.from("promoter_profiles").select("show_penalty_rates").eq("user_id", user!.id).maybeSingle(),
       ]);
-      const data = rateRes.data as { base_rate: number | null; saturday_rate: number | null; public_holiday_rate: number | null; award_code: string | null } | null;
+      const data = rateRes.data as { base_rate: number | null; saturday_rate: number | null; public_holiday_rate: number | null; award_code: string | null; employment_type: string | null } | null;
       if (data) {
         if (data.base_rate           != null) setWeekday(String(data.base_rate));
         if (data.saturday_rate       != null) setWeekend(String(data.saturday_rate));
         if (data.public_holiday_rate != null) setPubHoliday(String(data.public_holiday_rate));
         setAwardCode(data.award_code ?? null);
+        setEmploymentType(empFromDb(data.employment_type));
       }
       setShowPenaltyRates((profRes.data as { show_penalty_rates: boolean } | null)?.show_penalty_rates === true);
       setDataLoading(false);
@@ -74,6 +91,7 @@ export default function PayRatesPage() {
           sunday_rate:         wk,
           public_holiday_rate: ph,
           award_code:          awardCode,
+          employment_type:     EMP_TO_DB[employmentType],
         },
         { onConflict: "vendor_id" }
       );
@@ -162,6 +180,25 @@ export default function PayRatesPage() {
               <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${showPenaltyRates ? "translate-x-5" : ""}`} />
             </span>
           </button>
+
+          {/* Default employment type — persisted to pay_rates.employment_type */}
+          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-5 py-4">
+            <p className="text-sm font-semibold text-white mb-3">Default Employment Type</p>
+            <div className="flex items-center gap-1.5">
+              {EMPLOYMENT_TYPE_OPTIONS.map(([val, lbl]) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setEmploymentType(val)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    employmentType === val ? "bg-violet-600 text-white" : "border border-white/[0.12] text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          </div>
 
           {RATES.map(({ label, sub, value, setter, placeholder }) => (
             <div key={label} className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-5 py-4">
