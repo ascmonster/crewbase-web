@@ -5,8 +5,10 @@ import { useRequireVendorAuth } from "@/lib/useRequireVendorAuth";
 import { createClient } from "@/lib/supabase";
 
 // ── Types ──────────────────────────────────────────────────────────────────
-// Backed by the `job_postings` table (vendor-owned via vendor_id).
-// job_applications links to job_postings via job_id.
+// Backed by the `job_posts` table (vendor-owned via vendor_id = auth user id).
+// job_applications links to job_posts via job_id. The JobRow field names below
+// are kept (body/date/hourly_rate/spots_available); the DB columns are
+// description/start_date/pay_rate/positions_available, aliased in JOB_SELECT.
 
 type JobRow = {
   id: string;
@@ -39,7 +41,7 @@ type ApplicantRow = {
 
 type Tab = "postings" | "applicants";
 
-const JOB_SELECT = "id, title, body, location, event_name, date, start_time, end_time, hourly_rate, spots_available, requirements, category, status";
+const JOB_SELECT = "id, title, body:description, location, date:start_date, start_time, end_time, hourly_rate:pay_rate, spots_available:positions_available, requirements, category, status";
 
 const CATEGORY_OPTIONS = ["Bar Staff", "Food Staff", "Event Staff", "Security", "Ticketing", "Cleaning", "Other"];
 
@@ -164,17 +166,17 @@ function PostJobModal({ vendorId, onClose, onPosted }: {
     setErr(null);
 
     const { data, error } = await createClient()
-      .from("job_postings")
+      .from("job_posts")
       .insert({
         vendor_id: vendorId,
         title: title.trim(),
-        body: body.trim() || null,
+        description: body.trim() || null,
         location: location.trim() || null,
-        date: date || null,
+        start_date: date || null,
         start_time: startTime || null,
         end_time: endTime || null,
-        hourly_rate: hourlyRate ? parseFloat(hourlyRate) : null,
-        spots_available: spots ? parseInt(spots, 10) : null,
+        pay_rate: hourlyRate ? parseFloat(hourlyRate) : null,
+        positions_available: spots ? parseInt(spots, 10) : null,
         requirements: requirements.trim() || null,
         category: category || null,
         status: "open",
@@ -301,10 +303,10 @@ export default function VendorJobsPage() {
       setJobsLoading(true);
       const supabase = createClient();
       const { data: jobRows } = await supabase
-        .from("job_postings")
+        .from("job_posts")
         .select(JOB_SELECT)
         .eq("vendor_id", user!.id)
-        .order("date", { ascending: false });
+        .order("start_date", { ascending: false });
 
       const rows = (jobRows ?? []) as Omit<JobRow, "applicant_count" | "pending_count">[];
       const jobIds = rows.map((r) => r.id);
@@ -377,7 +379,7 @@ export default function VendorJobsPage() {
   }, [activeTab, appsLoaded, user?.id, jobsLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function deleteJob(id: string) {
-    await createClient().from("job_postings").delete().eq("id", id).eq("vendor_id", user!.id);
+    await createClient().from("job_posts").delete().eq("id", id).eq("vendor_id", user!.id);
     setJobs((prev) => prev.filter((j) => j.id !== id));
     setConfirmDelete(null);
   }
