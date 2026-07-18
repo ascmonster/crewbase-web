@@ -196,6 +196,7 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
   onClose: () => void;
 }) {
   const [shiftCount, setShiftCount] = useState<number | null>(null);
+  const [noShowCount, setNoShowCount] = useState<number | null>(null);
   const [payRates, setPayRates] = useState<PayRateRow[]>([]);
   const [defaults, setDefaults] = useState<DefaultPayRate | null>(null);
   const [awardCode, setAwardCode] = useState<string | null>(null);
@@ -212,7 +213,7 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
         supabase.from("shifts").select("id", { count: "exact", head: true }).eq("staff_id", staff.user_id),
         supabase.from("staff_pay_rates").select("rate_type, hourly_rate").eq("employer_id", promoterId).eq("staff_id", staff.user_id),
         supabase.from("pay_rates").select("base_rate, saturday_rate, public_holiday_rate, award_code").eq("vendor_id", promoterId).maybeSingle(),
-        supabase.from("staff_profiles").select("date_of_birth").eq("user_id", staff.user_id).maybeSingle(),
+        supabase.from("staff_profiles").select("date_of_birth, no_show_count").eq("user_id", staff.user_id).maybeSingle(),
         supabase.from("promoter_profiles").select("show_penalty_rates").eq("user_id", promoterId).maybeSingle(),
         supabase.from("promoter_staff").select("employment_type, award").eq("id", staff.id).maybeSingle(),
       ]);
@@ -223,7 +224,9 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
       setDefaults((defRes.data as DefaultPayRate | null) ?? null);
       // Per-staff award if set, otherwise fall back to the promoter's default.
       setAwardCode(ps?.award ?? defaultAward);
-      setStaffAge(calculateAge((dobRes.data as { date_of_birth: string | null } | null)?.date_of_birth));
+      const sp = dobRes.data as { date_of_birth: string | null; no_show_count: number | null } | null;
+      setStaffAge(calculateAge(sp?.date_of_birth));
+      setNoShowCount(sp?.no_show_count ?? 0);
       setShowPenaltyRates((profRes.data as { show_penalty_rates: boolean } | null)?.show_penalty_rates === true);
       setEmploymentType(empFromDb(ps?.employment_type));
     }
@@ -294,7 +297,7 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
             <p className="text-xs text-zinc-500 mt-0.5">Shifts</p>
           </div>
           <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3 text-center">
-            <p className="text-lg font-bold text-white">—</p>
+            <p className="text-lg font-bold text-white">{noShowCount ?? "…"}</p>
             <p className="text-xs text-zinc-500 mt-0.5">No Shows</p>
           </div>
         </div>
