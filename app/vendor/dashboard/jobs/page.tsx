@@ -159,6 +159,7 @@ function PostJobModal({ vendorId, onClose, onPosted }: {
   const [hourlyRate, setHourlyRate] = useState("");
   const [spots, setSpots] = useState("");
   const [requirements, setRequirements] = useState("");
+  const [visibility, setVisibility] = useState<"public" | "private">("public");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -187,6 +188,7 @@ function PostJobModal({ vendorId, onClose, onPosted }: {
         requirements: requirementsArray.length > 0 ? JSON.stringify([...requirementsArray]) : null,
         category: category || null,
         status: "open",
+        visibility,
       })
       .select(JOB_SELECT)
       .single();
@@ -261,6 +263,25 @@ function PostJobModal({ vendorId, onClose, onPosted }: {
             <textarea value={requirements} onChange={(e) => setRequirements(e.target.value)} rows={2} placeholder="e.g. RSA, food handling certificate"
               className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-[#FF6B35] transition-colors resize-none" />
           </Field>
+
+          {/* Audience — persisted to job_posts.visibility (matches mobile) */}
+          <Field label="Audience">
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setVisibility("private")}
+                className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${visibility === "private" ? "bg-[#FF6B35] text-white" : "border border-white/[0.08] text-zinc-400 hover:text-white"}`}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                My Team Only
+              </button>
+              <button type="button" onClick={() => setVisibility("public")}
+                className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${visibility === "public" ? "bg-[#FF6B35] text-white" : "border border-white/[0.08] text-zinc-400 hover:text-white"}`}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                Public – All Staff
+              </button>
+            </div>
+          </Field>
+          {visibility === "private" && (
+            <p className="text-xs text-zinc-500 -mt-2">Only staff who have previously worked with you will see this post.</p>
+          )}
 
           {err && <p className="text-xs text-red-400">{err}</p>}
 
