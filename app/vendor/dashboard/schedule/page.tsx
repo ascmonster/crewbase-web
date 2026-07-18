@@ -457,7 +457,7 @@ export default function VendorSchedulePage() {
       staffIds.length ? supabase.from("users").select("id, full_name").in("id", staffIds) : Promise.resolve({ data: [] as any[] }),
       supabase.from("vendor_trucks").select("id, name").eq("vendor_id", vendorId).order("name", { ascending: true }),
       supabase.from("events").select("id, name, location, start_date").eq("vendor_id", vendorId).in("status", ["upcoming", "active"]).order("start_date", { ascending: true }),
-      staffIds.length ? supabase.from("staff_pay_rates").select("staff_id, hourly_rate").eq("employer_id", vendorId).eq("rate_type", "weekday").in("staff_id", staffIds) : Promise.resolve({ data: [] as any[] }),
+      staffIds.length ? supabase.from("staff_pay_rates").select("staff_id, hourly_rate").eq("vendor_id", vendorId).eq("rate_type", "weekday").in("staff_id", staffIds) : Promise.resolve({ data: [] as any[] }),
     ]);
 
     const nameMap: Record<string, string> = {};

@@ -211,7 +211,7 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
       const supabase = createClient();
       const [shiftRes, ratesRes, defRes, dobRes, profRes, psRes] = await Promise.all([
         supabase.from("shifts").select("id", { count: "exact", head: true }).eq("staff_id", staff.user_id),
-        supabase.from("staff_pay_rates").select("rate_type, hourly_rate").eq("employer_id", promoterId).eq("staff_id", staff.user_id),
+        supabase.from("staff_pay_rates").select("rate_type, hourly_rate").eq("vendor_id", promoterId).eq("staff_id", staff.user_id),
         supabase.from("pay_rates").select("base_rate, saturday_rate, public_holiday_rate, award_code").eq("vendor_id", promoterId).maybeSingle(),
         supabase.from("staff_profiles").select("date_of_birth, no_show_count").eq("user_id", staff.user_id).maybeSingle(),
         supabase.from("promoter_profiles").select("show_penalty_rates").eq("user_id", promoterId).maybeSingle(),
@@ -240,8 +240,8 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
     if (isNaN(rate)) return;
     setSaving(true);
     await createClient().from("staff_pay_rates").upsert(
-      { employer_id: promoterId, staff_id: staff.user_id, rate_type: rateType, hourly_rate: rate },
-      { onConflict: "employer_id,staff_id,rate_type" }
+      { vendor_id: promoterId, staff_id: staff.user_id, rate_type: rateType, hourly_rate: rate },
+      { onConflict: "vendor_id,staff_id,rate_type" }
     );
     setPayRates((prev) => [...prev.filter((r) => r.rate_type !== rateType), { rate_type: rateType, hourly_rate: rate }]);
     setEditing(null);
@@ -249,7 +249,7 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
   }
 
   async function clearRate(rateType: string) {
-    await createClient().from("staff_pay_rates").delete().eq("employer_id", promoterId).eq("staff_id", staff.user_id).eq("rate_type", rateType);
+    await createClient().from("staff_pay_rates").delete().eq("vendor_id", promoterId).eq("staff_id", staff.user_id).eq("rate_type", rateType);
     setPayRates((prev) => prev.filter((r) => r.rate_type !== rateType));
   }
 

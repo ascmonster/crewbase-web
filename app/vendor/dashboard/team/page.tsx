@@ -281,7 +281,7 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
       staffIds.length ? supabase.from("user_ratings_summary").select("user_id, average_stars").in("user_id", staffIds) : Promise.resolve({ data: [] as any[] }),
       supabase.from("vendor_staff_pins").select("staff_id, pin").eq("vendor_id", vendorId),
       supabase.from("shifts").select("staff_id").eq("vendor_id", vendorId).eq("status", "completed"),
-      supabase.from("staff_pay_rates").select("staff_id, rate_type, hourly_rate").eq("employer_id", vendorId),
+      supabase.from("staff_pay_rates").select("staff_id, rate_type, hourly_rate").eq("vendor_id", vendorId),
       supabase.from("vendor_team_requests").select("*").eq("vendor_id", vendorId).eq("status", "pending"),
       supabase.from("manager_assignments").select("staff_id").eq("vendor_id", vendorId),
     ]);
@@ -379,8 +379,8 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
     for (const e of entries) {
       if (e.value.trim() === "") continue;
       await supabase.from("staff_pay_rates").upsert(
-        { employer_id: vendorId, staff_id: m.staff_id, rate_type: e.rate_type, hourly_rate: parseFloat(e.value) },
-        { onConflict: "employer_id,staff_id,rate_type" }
+        { vendor_id: vendorId, staff_id: m.staff_id, rate_type: e.rate_type, hourly_rate: parseFloat(e.value) },
+        { onConflict: "vendor_id,staff_id,rate_type" }
       );
     }
     setMembers((prev) => prev.map((x) => (x.staff_id === m.staff_id ? { ...x, rates } : x)));
@@ -598,7 +598,7 @@ function TimesheetsTab({ vendorId }: { vendorId: string }) {
       const supabase = createClient();
       const [shiftRes, payRes] = await Promise.all([
         supabase.from("shifts").select("*, events(name), vendor_trucks(name)").eq("vendor_id", vendorId).eq("status", "completed").order("clock_out_time", { ascending: false }),
-        supabase.from("staff_pay_rates").select("staff_id").eq("employer_id", vendorId),
+        supabase.from("staff_pay_rates").select("staff_id").eq("vendor_id", vendorId),
       ]);
       const rows = (shiftRes.data ?? []) as any[];
       const overrideStaff = new Set(((payRes.data ?? []) as any[]).map((r) => r.staff_id));
