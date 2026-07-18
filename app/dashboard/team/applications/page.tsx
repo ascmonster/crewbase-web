@@ -253,6 +253,10 @@ function ViewApplicantsModal({ job, onClose, onCountChange }: {
   async function setStatus(appId: string, status: "approved" | "rejected") {
     setActing(appId);
     await createClient().from("job_applications").update({ status }).eq("id", appId);
+    // On accept, bump the job's filled count (fire-and-forget, matches mobile).
+    if (status === "approved") {
+      createClient().rpc("increment_positions_filled", { job_id: job.id });
+    }
     const old = applicants.find((a) => a.id === appId);
     const wasPending = !old?.status || old.status === "pending";
     setApplicants((prev) => prev.map((a) => a.id === appId ? { ...a, status } : a));
