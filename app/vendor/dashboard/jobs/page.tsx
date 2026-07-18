@@ -52,15 +52,18 @@ const REQ_OPTIONS = [
 ];
 const REQ_LABELS: Record<string, string> = Object.fromEntries(REQ_OPTIONS.map((r) => [r.key, r.label]));
 
-// Parse the stored requirements value into readable pill labels.
-// Handles JSON arrays (mobile / new format) and legacy free text.
+// Parse the stored requirements value into readable pill labels. Requirements
+// are stored as a JSON array; JSON.parse is guarded so legacy free-text rows
+// (pre-JSON) safely fall back to an empty array (no pills) rather than throwing.
 function parseRequirements(raw: string | null): string[] {
   if (!raw) return [];
   try {
     const arr = JSON.parse(raw);
     if (Array.isArray(arr)) return arr.map((x) => REQ_LABELS[String(x)] ?? String(x)).filter(Boolean);
-  } catch { /* not JSON — treat as free text below */ }
-  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+    return [];
+  } catch {
+    return [];
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -165,6 +168,10 @@ function PostJobModal({ vendorId, onClose, onPosted }: {
     setSaving(true);
     setErr(null);
 
+    // Store requirements as a JSON array of the (comma-separated) strings the
+    // user entered, matching the promoter format that parseRequirements reads.
+    const requirementsArray = requirements.split(",").map((s) => s.trim()).filter(Boolean);
+
     const { data, error } = await createClient()
       .from("job_posts")
       .insert({
@@ -177,7 +184,7 @@ function PostJobModal({ vendorId, onClose, onPosted }: {
         end_time: endTime || null,
         pay_rate: hourlyRate ? parseFloat(hourlyRate) : null,
         positions_available: spots ? parseInt(spots, 10) : null,
-        requirements: requirements.trim() || null,
+        requirements: requirementsArray.length > 0 ? JSON.stringify([...requirementsArray]) : null,
         category: category || null,
         status: "open",
       })
