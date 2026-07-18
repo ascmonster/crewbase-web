@@ -94,7 +94,8 @@ export default function PayrollPage() {
   function exportCSV() {
     const csvEscape = (val: unknown): string => {
       if (val == null) return '';
-      const s = String(val);
+      let s = String(val);
+      if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
       if (s.includes(',') || s.includes('"') || s.includes('\n')) {
         return '"' + s.replace(/"/g, '""') + '"';
       }
