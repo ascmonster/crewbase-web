@@ -92,11 +92,19 @@ export default function PayrollPage() {
   const totalPay    = filtered.reduce((s, r) => s + (r.total_pay ?? 0), 0);
 
   function exportCSV() {
+    const csvEscape = (val: unknown): string => {
+      if (val == null) return '';
+      const s = String(val);
+      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+      return s;
+    };
     const rows = [
       ["Name", "ABN", "TFN", "Shifts", "Hours", "Total Pay"],
       ...byStaff.map((s) => [s.name, s.abn ?? "", s.tfn ?? "", String(s.shifts), s.hours.toFixed(2), s.amount.toFixed(2)]),
     ];
-    const csv = rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
+    const csv = rows.map((r) => r.map(csvEscape).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
@@ -107,11 +115,13 @@ export default function PayrollPage() {
   }
 
   function exportPDF() {
+    const htmlEscape = (val: unknown): string =>
+      String(val ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const rows = byStaff.map((s) => `
       <tr>
-        <td>${s.name}</td>
-        <td>${s.abn ?? "—"}</td>
-        <td>${s.tfn ?? "—"}</td>
+        <td>${htmlEscape(s.name)}</td>
+        <td>${htmlEscape(s.abn ?? "—")}</td>
+        <td>${htmlEscape(s.tfn ?? "—")}</td>
         <td>${s.shifts}</td>
         <td>${s.hours.toFixed(2)}h</td>
         <td>$${s.amount.toFixed(2)}</td>
