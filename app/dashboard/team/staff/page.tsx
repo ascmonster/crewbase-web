@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 import { createClient } from "@/lib/supabase";
 import AwardRateGuide from "@/components/AwardRateGuide";
+import AwardSelector from "@/components/AwardSelector";
 import { calculateAge } from "@/lib/getAwardRates";
 
 type PromoterStaff = {
@@ -213,15 +214,18 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
         supabase.from("pay_rates").select("base_rate, saturday_rate, public_holiday_rate, award_code").eq("vendor_id", promoterId).maybeSingle(),
         supabase.from("staff_profiles").select("date_of_birth").eq("user_id", staff.user_id).maybeSingle(),
         supabase.from("promoter_profiles").select("show_penalty_rates").eq("user_id", promoterId).maybeSingle(),
-        supabase.from("promoter_staff").select("employment_type").eq("id", staff.id).maybeSingle(),
+        supabase.from("promoter_staff").select("employment_type, award").eq("id", staff.id).maybeSingle(),
       ]);
+      const ps = psRes.data as { employment_type: string | null; award: string | null } | null;
+      const defaultAward = (defRes.data as { award_code: string | null } | null)?.award_code ?? null;
       setShiftCount(shiftRes.count ?? 0);
       setPayRates((ratesRes.data as PayRateRow[]) ?? []);
       setDefaults((defRes.data as DefaultPayRate | null) ?? null);
-      setAwardCode((defRes.data as { award_code: string | null } | null)?.award_code ?? null);
+      // Per-staff award if set, otherwise fall back to the promoter's default.
+      setAwardCode(ps?.award ?? defaultAward);
       setStaffAge(calculateAge((dobRes.data as { date_of_birth: string | null } | null)?.date_of_birth));
       setShowPenaltyRates((profRes.data as { show_penalty_rates: boolean } | null)?.show_penalty_rates === true);
-      setEmploymentType(empFromDb((psRes.data as { employment_type: string | null } | null)?.employment_type));
+      setEmploymentType(empFromDb(ps?.employment_type));
     }
     load();
   }, [staff.user_id, promoterId, staff.id]);
@@ -253,6 +257,16 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
     await createClient()
       .from("promoter_staff")
       .update({ employment_type: EMP_TO_DB[next] })
+      .eq("id", staff.id);
+  }
+
+  // Persist the per-staff award to promoter_staff (fire-and-forget update keyed
+  // by the promoter_staff row id, consistent with the other mutations here).
+  async function changeAward(next: string | null) {
+    setAwardCode(next);
+    await createClient()
+      .from("promoter_staff")
+      .update({ award: next })
       .eq("id", staff.id);
   }
 
@@ -336,6 +350,14 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
                 </div>
               );
             })}
+          </div>
+
+          {/* Modern Award — persisted per-staff to promoter_staff.award */}
+          <div className="mt-4">
+            <label className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Modern Award</label>
+            <div className="mt-1.5">
+              <AwardSelector value={awardCode} onChange={changeAward} accent="violet" />
+            </div>
           </div>
 
           {/* Employment type — drives the casual 25% loading in the guide */}
