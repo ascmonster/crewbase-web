@@ -128,6 +128,7 @@ function ShiftModal({ userId, staff, trucks, staffRateMap, existing, initialDate
       start_time: startTime || null, end_time: endTime || null,
       role: role.trim() || null, notes: notes.trim() || null,
       truck_id: truckId || null, pay_rate: payRate.trim() ? parseFloat(payRate) : null,
+      shift_type: "assigned",
     };
     const SELECT = "id, staff_id, shift_date, start_time, end_time, role, notes, status, truck_id, pay_rate";
     const { data, error } = existing
@@ -321,6 +322,13 @@ export default function SchedulePage() {
   }, [user?.id, range.from, range.to, acceptedStaff]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadSchedules(); }, [loadSchedules]);
+
+  // Reload schedules when the user returns to the tab.
+  useEffect(() => {
+    const onFocus = () => loadSchedules();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [loadSchedules]);
 
   function handleSaved(s: Schedule) {
     setSchedules((prev) => {

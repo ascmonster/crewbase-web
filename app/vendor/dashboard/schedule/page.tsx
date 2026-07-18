@@ -508,6 +508,13 @@ export default function VendorSchedulePage() {
   useEffect(() => { loadRefs(); }, [loadRefs]);
   useEffect(() => { loadShifts(); }, [loadShifts]);
 
+  // Reload shifts when the user returns to the tab.
+  useEffect(() => {
+    const onFocus = () => loadShifts();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [loadShifts]);
+
   // ── Overlap detection (advisory) ──
   async function findOverlap(staffId: string, shiftDate: string, startTime: string | null, endTime: string | null, ignoreId?: string) {
     if (!staffId) return null;
@@ -530,6 +537,7 @@ export default function VendorSchedulePage() {
       staff_id: p.staff_id, shift_date: p.shift_date, start_time: p.start_time, end_time: p.end_time,
       role: p.role, truck_id: p.truck_id, event_id: p.event_id, location: p.location, pay_rate: p.pay_rate,
       notes: p.notes, is_open: p.is_open, max_staff: p.max_staff, requirements: p.requirements, visibility: p.visibility,
+      shift_type: p.is_open ? "open" : p.event_id ? "event" : "assigned",
     };
     const { error } = p.id
       ? await supabase.from("schedules").update(row).eq("id", p.id)
@@ -597,7 +605,10 @@ export default function VendorSchedulePage() {
       const { error } = await supabase.from("schedules").update({ staff_id: claim.staff_id, is_open: false, status: "scheduled" }).eq("id", claim.schedule_id);
       if (error) { window.alert(error.message); return; }
       await supabase.from("shift_claims").update({ status: "approved" }).eq("id", claim.id);
+      // Reject sibling pending claims and notify each auto-rejected claimant.
+      const { data: siblings } = await supabase.from("shift_claims").select("staff_id").eq("schedule_id", claim.schedule_id).eq("status", "pending").neq("id", claim.id);
       await supabase.from("shift_claims").update({ status: "rejected" }).eq("schedule_id", claim.schedule_id).eq("status", "pending").neq("id", claim.id);
+      await Promise.all(((siblings ?? []) as any[]).map((s) => notifyUser(s.staff_id, "Claim Declined", "Another applicant was selected for this shift.", { type: "claim_rejected" })));
       await notifyUser(claim.staff_id, "Shift Confirmed", `You've been approved for the shift on ${claimsShift ? fmtDate(claimsShift.shift_date) : "your shift"}`, { type: "claim_approved" });
       setClaimsShift(null);
       await loadShifts();
