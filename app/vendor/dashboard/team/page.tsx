@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useRequireVendorAuth } from "@/lib/useRequireVendorAuth";
 import { createClient } from "@/lib/supabase";
 import AwardRateGuide from "@/components/AwardRateGuide";
@@ -1700,6 +1701,7 @@ function PayrollTab({ vendorId }: { vendorId: string }) {
 
 export default function VendorTeamPage() {
   const { user, loading: authLoading } = useRequireVendorAuth();
+  const router = useRouter();
   const [tab, setTab] = useState<Tab>("staff");
 
   if (authLoading || !user) {
@@ -1717,7 +1719,7 @@ export default function VendorTeamPage() {
 
       <div className="flex gap-0 mb-6 border-b border-white/[0.06] overflow-x-auto scrollbar-none">
         {([["staff", "My Staff"], ["schedule", "Schedule"], ["timesheets", "Timesheets"], ["invoices", "Invoices"], ["payroll", "Payroll"]] as [Tab, string][]).map(([key, label]) => (
-          <button key={key} onClick={() => setTab(key)}
+          <button key={key} onClick={() => (key === "schedule" ? router.push("/vendor/dashboard/schedule") : setTab(key))}
             className={`shrink-0 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${tab === key ? "text-white border-[#FF6B35]" : "text-zinc-500 border-transparent hover:text-zinc-300"}`}>
             {label}
           </button>
@@ -1725,7 +1727,7 @@ export default function VendorTeamPage() {
       </div>
 
       {tab === "staff" && <MyStaffTab vendorId={user.id} />}
-      {tab === "schedule" && <ScheduleTab vendorId={user.id} />}
+      {/* Schedule now lives on its own page — the tab navigates to /vendor/dashboard/schedule. */}
       {tab === "timesheets" && <TimesheetsTab vendorId={user.id} />}
       {tab === "invoices" && <InvoicesTab vendorId={user.id} />}
       {tab === "payroll" && <PayrollTab vendorId={user.id} />}
