@@ -12,6 +12,7 @@ type Shift = {
   clock_out_time: string | null;
   hours_worked: number | null;
   total_pay: number | null;
+  hourly_rate: number | null;
   status: string | null;
   payment_status: string | null;
   payment_notes: string | null;
@@ -59,12 +60,19 @@ function EditBreaksModal({ shift, onSaved, onClose }: {
 
   function preview() {
     if (!shift.clock_in_time || !shift.clock_out_time) return null;
+    // rawHours from the clock in/out timestamps, not the stored hours_worked.
     const rawHours = (new Date(shift.clock_out_time).getTime() - new Date(shift.clock_in_time).getTime()) / 3_600_000;
     const breakMins = parseFloat(mins) || 0;
     const newHours = rawHours - breakMins / 60;
-    const impliedRate = shift.hours_worked ? (shift.total_pay ?? 0) / shift.hours_worked : 0;
-    const newPay = newHours * impliedRate;
-    return { newHours: Math.max(newHours, 0), newPay: Math.max(newPay, 0) };
+    // Use the rate captured at approval; pre-existing shifts derive it once from
+    // the original totals (fallback) rather than re-dividing rounded totals.
+    const rate = shift.hourly_rate != null
+      ? Number(shift.hourly_rate)
+      : Number(shift.hours_worked) > 0
+        ? parseFloat((Number(shift.total_pay ?? 0) / Number(shift.hours_worked)).toFixed(4))
+        : 0;
+    const newPay = newHours * rate;
+    return { newHours: Math.max(newHours, 0), newPay: Math.max(newPay, 0), rate };
   }
 
   async function save() {
@@ -76,8 +84,9 @@ function EditBreaksModal({ shift, onSaved, onClose }: {
       break_deduction_type: "manual",
       hours_worked: p.newHours,
       total_pay: p.newPay,
+      hourly_rate: p.rate,
     }).eq("id", shift.id);
-    onSaved({ total_break_minutes: parseFloat(mins) || 0, break_deduction_type: "manual", hours_worked: p.newHours, total_pay: p.newPay });
+    onSaved({ total_break_minutes: parseFloat(mins) || 0, break_deduction_type: "manual", hours_worked: p.newHours, total_pay: p.newPay, hourly_rate: p.rate });
     onClose();
     setSaving(false);
   }
@@ -323,7 +332,7 @@ export default function TimesheetsPage() {
       if (eventIds.length > 0) {
         const { data } = await supabase
           .from("shifts")
-          .select("id, staff_id, clock_in_time, clock_out_time, hours_worked, total_pay, status, payment_status, payment_notes, payment_proof_url, paid_at, approved_at, total_break_minutes, break_deduction_type, event_id, truck_id, staff_profiles(full_name), events(name), vendor_trucks(name)")
+          .select("id, staff_id, clock_in_time, clock_out_time, hours_worked, total_pay, hourly_rate, status, payment_status, payment_notes, payment_proof_url, paid_at, approved_at, total_break_minutes, break_deduction_type, event_id, truck_id, staff_profiles(full_name), events(name), vendor_trucks(name)")
           .in("event_id", eventIds)
           .eq("status", "completed")
           .order("clock_out_time", { ascending: false });
@@ -361,8 +370,16 @@ export default function TimesheetsPage() {
   }
 
   async function approveShift(id: string) {
-    await createClient().from("shifts").update({ payment_status: "approved", approved_at: new Date().toISOString(), approved_by: user?.id }).eq("id", id);
-    updateShift(id, { payment_status: "approved", approved_at: new Date().toISOString() });
+    const shift = shifts.find((s) => s.id === id);
+    // Capture the effective hourly rate once at approval so later break edits
+    // recalc from a fixed rate rather than re-dividing rounded totals (drift).
+    const hourly_rate = shift?.hourly_rate != null
+      ? Number(shift.hourly_rate)
+      : shift && Number(shift.hours_worked) > 0
+        ? parseFloat((Number(shift.total_pay ?? 0) / Number(shift.hours_worked)).toFixed(4))
+        : 0;
+    await createClient().from("shifts").update({ payment_status: "approved", approved_at: new Date().toISOString(), approved_by: user?.id, hourly_rate }).eq("id", id);
+    updateShift(id, { payment_status: "approved", approved_at: new Date().toISOString(), hourly_rate });
   }
 
   async function markNoShow(row: NoShowRow) {
