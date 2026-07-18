@@ -1,12 +1,36 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 import { createClient } from "@/lib/supabase";
 import AwardRateGuide from "@/components/AwardRateGuide";
 import AwardSelector from "@/components/AwardSelector";
 import { calculateAge } from "@/lib/getAwardRates";
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+// ── Exclusivity lock helpers ────────────────────────────────────────────────
+const LOCK_DURATIONS = [3, 6, 12];
+type LockRow = { lock_accepted?: boolean | null; lock_broken_by_staff?: boolean | null; lock_start_date?: string | null; lock_duration_months?: number | null };
+function isLockActive(row: LockRow | null | undefined): boolean {
+  if (!row || row.lock_accepted !== true || row.lock_broken_by_staff === true) return false;
+  if (!row.lock_start_date || row.lock_duration_months == null) return false;
+  const [y, m, d] = String(row.lock_start_date).slice(0, 10).split("-").map(Number);
+  const end = new Date(y, m - 1, d); end.setMonth(end.getMonth() + row.lock_duration_months);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return today < end;
+}
+function lockExpiry(row: LockRow | null | undefined): string | null {
+  if (!row?.lock_start_date || row?.lock_duration_months == null) return null;
+  const [y, m, d] = String(row.lock_start_date).slice(0, 10).split("-").map(Number);
+  const end = new Date(y, m - 1, d); end.setMonth(end.getMonth() + row.lock_duration_months);
+  return end.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
+}
+async function notifyUser(userId: string | null, title: string, body: string, data: Record<string, unknown> = {}) {
+  if (!userId) return;
+  try { await createClient().functions.invoke("send-push-notification", { body: { userId, title, body, data } }); } catch { /* non-fatal */ }
+}
 
 type PromoterStaff = {
   id: string;
@@ -17,6 +41,8 @@ type PromoterStaff = {
   email: string | null;
   username: string | null;
   avg_stars: number | null;
+  lock_active: boolean;
+  lock_expiry: string | null;
 };
 
 type StaffProfileResult = {
@@ -48,80 +74,67 @@ function Stars({ rating }: { rating: number | null }) {
 
 function InviteModal({ promoterId, onInvited, onClose }: {
   promoterId: string;
-  onInvited: (s: PromoterStaff) => void;
+  onInvited: () => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<StaffProfileResult[]>([]);
   const [searching, setSearching] = useState(false);
-  const [adding, setAdding] = useState<string | null>(null);
+  const [result, setResult] = useState<StaffProfileResult | null>(null);
+  const [notFound, setNotFound] = useState(false);
+  const [lockBlocked, setLockBlocked] = useState(false);
+  const [lockEnabled, setLockEnabled] = useState(false);
+  const [lockMonths, setLockMonths] = useState(6);
+  const [sending, setSending] = useState(false);
+  const [invited, setInvited] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  function resetSearch() { setResult(null); setNotFound(false); setLockBlocked(false); setInvited(false); setErr(null); }
 
   async function search() {
     if (!query.trim()) return;
-    setSearching(true);
-    setErr(null);
-    const q = query.trim();
+    setSearching(true); resetSearch();
+    const q = query.trim().replace(/^@/, "");
     const supabase = createClient();
-
-    const { data: byUsername } = await supabase
-      .from("staff_profiles")
-      .select("id, user_id, full_name, username")
-      .ilike("username", `%${q}%`)
-      .limit(10);
-
-    if ((byUsername ?? []).length > 0) {
-      setResults((byUsername as StaffProfileResult[]) ?? []);
-      setSearching(false);
-      return;
+    let profile: StaffProfileResult | null = null;
+    const { data: byU } = await supabase.from("staff_profiles").select("id, user_id, full_name, username").ilike("username", `%${q}%`).limit(1);
+    if (byU && byU.length) profile = byU[0] as StaffProfileResult;
+    else {
+      const { data: userRow } = await supabase.from("users").select("id").eq("email", q).maybeSingle();
+      if (userRow) {
+        const { data: sp } = await supabase.from("staff_profiles").select("id, user_id, full_name, username").eq("user_id", (userRow as { id: string }).id).maybeSingle();
+        if (sp) profile = sp as StaffProfileResult;
+      }
     }
-
-    // Fallback: email search via users → staff_profiles
-    const { data: userRow } = await supabase
-      .from("users")
-      .select("id")
-      .eq("email", q)
-      .maybeSingle();
-
-    if (userRow) {
-      const { data: spRow } = await supabase
-        .from("staff_profiles")
-        .select("id, user_id, full_name, username")
-        .eq("user_id", (userRow as { id: string }).id)
-        .maybeSingle();
-      setResults(spRow ? [spRow as StaffProfileResult] : []);
-      if (!spRow) setErr("User found but no staff profile exists.");
-    } else {
-      setResults([]);
-    }
+    if (!profile) { setNotFound(true); setSearching(false); return; }
+    // Can't offer a lock to someone who previously broke one with us.
+    const { data: broken } = await supabase.from("promoter_staff").select("id").eq("promoter_id", promoterId).eq("user_id", profile.user_id).eq("lock_broken_by_staff", true).maybeSingle();
+    if (broken) { setLockBlocked(true); setLockEnabled(false); }
+    setResult(profile);
     setSearching(false);
   }
 
-  async function invite(profile: StaffProfileResult) {
-    setAdding(profile.id);
-    setErr(null);
-    const { data, error } = await createClient()
-      .from("promoter_staff")
-      .insert({ promoter_id: promoterId, user_id: profile.user_id, status: "pending" })
-      .select("id, user_id, status, created_at")
-      .single();
-    if (error) {
-      setErr(error.message);
-    } else if (data) {
-      const row = data as { id: string; user_id: string; status: string; created_at: string };
-      onInvited({
-        id: row.id, user_id: row.user_id, status: row.status, created_at: row.created_at,
-        full_name: profile.full_name, email: null, username: profile.username, avg_stars: null,
-      });
-      setResults((r) => r.filter((x) => x.id !== profile.id));
-    }
-    setAdding(null);
+  async function invite() {
+    if (!result) return;
+    setSending(true); setErr(null);
+    const supabase = createClient();
+    const lockVal = lockEnabled && !lockBlocked ? lockMonths : null;
+    // Reactivate a soft-removed (inactive) row instead of inserting (unique
+    // promoter_id+user_id); the broken-lock flag stays so no lock is re-offered.
+    const { data: inactive } = await supabase.from("promoter_staff").select("id").eq("promoter_id", promoterId).eq("user_id", result.user_id).eq("status", "inactive").maybeSingle();
+    const { error } = inactive
+      ? await supabase.from("promoter_staff").update({ status: "pending", lock_duration_months: null, lock_broken_by_staff: true, invited_at: new Date().toISOString() }).eq("id", (inactive as { id: string }).id)
+      : await supabase.from("promoter_staff").insert({ promoter_id: promoterId, user_id: result.user_id, status: "pending", lock_duration_months: lockVal });
+    setSending(false);
+    if (error) { setErr(error.code === "23505" ? "This person is already on your team." : error.message); return; }
+    await notifyUser(result.user_id, "Team Invite", "You've been invited to join a team on Crewbase!", { type: "team_invite" });
+    setInvited(true);
+    onInvited();
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-4 pb-4 sm:pb-0">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-md rounded-2xl border border-white/[0.08] bg-zinc-950 p-5 flex flex-col gap-4">
+      <div className="relative z-10 w-full max-w-md rounded-2xl border border-white/[0.08] bg-zinc-950 p-5 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between">
           <h2 className="font-semibold text-white">Invite Staff Member</h2>
           <button onClick={onClose} className="text-zinc-500 hover:text-white transition-colors">
@@ -129,33 +142,58 @@ function InviteModal({ promoterId, onInvited, onClose }: {
           </button>
         </div>
         <div className="flex gap-2">
-          <input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()}
+          <input value={query} onChange={(e) => { setQuery(e.target.value); resetSearch(); }} onKeyDown={(e) => e.key === "Enter" && search()}
             placeholder="Search by username or email…"
             className="flex-1 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors" />
-          <button onClick={search} disabled={searching}
+          <button onClick={search} disabled={searching || !query.trim()}
             className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500 transition-colors disabled:opacity-50">
             {searching ? "…" : "Search"}
           </button>
         </div>
-        {err && <p className="text-xs text-red-400">{err}</p>}
-        {results.length > 0 && (
-          <div className="flex flex-col gap-1.5">
-            {results.map((r) => (
-              <div key={r.id} className="flex items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
-                <div>
-                  <p className="text-sm font-medium text-white">{r.full_name}</p>
-                  {r.username && <p className="text-xs text-zinc-500">@{r.username}</p>}
-                </div>
-                <button onClick={() => invite(r)} disabled={adding === r.id}
-                  className="rounded-lg bg-violet-600/20 border border-violet-500/30 text-violet-300 px-3 py-1 text-xs font-semibold hover:bg-violet-600/40 transition-colors disabled:opacity-50">
-                  {adding === r.id ? "…" : "Invite"}
-                </button>
+
+        {/* Exclusivity lock proposal */}
+        {lockBlocked ? (
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2.5">
+            <p className="text-xs text-amber-400">Exclusivity lock unavailable — this staff member previously broke a lock with you.</p>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-3 flex flex-col gap-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-white">Exclusivity Lock</p>
+                <p className="text-xs text-zinc-500 mt-0.5">Staff will only see jobs from your team during the lock period</p>
               </div>
-            ))}
+              <button type="button" onClick={() => setLockEnabled((v) => !v)}
+                className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${lockEnabled ? "bg-violet-600" : "bg-white/[0.12]"}`}>
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${lockEnabled ? "translate-x-5" : ""}`} />
+              </button>
+            </div>
+            {lockEnabled && (
+              <div className="flex items-center gap-2">
+                {LOCK_DURATIONS.map((m) => (
+                  <button key={m} type="button" onClick={() => setLockMonths(m)}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${lockMonths === m ? "bg-violet-600 text-white" : "border border-white/[0.12] text-zinc-400 hover:text-white"}`}>
+                    {m} months
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
-        {results.length === 0 && query && !searching && (
-          <p className="text-xs text-zinc-500 text-center py-2">No staff profiles found</p>
+
+        {err && <p className="text-xs text-red-400">{err}</p>}
+        {notFound && <p className="text-xs text-zinc-500 text-center py-2">No staff profiles found</p>}
+        {result && (
+          <div className="flex items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
+            <div>
+              <p className="text-sm font-medium text-white">{result.full_name}</p>
+              {result.username && <p className="text-xs text-zinc-500">@{result.username}</p>}
+            </div>
+            <button onClick={invite} disabled={sending || invited}
+              className="rounded-lg bg-violet-600/20 border border-violet-500/30 text-violet-300 px-3 py-1 text-xs font-semibold hover:bg-violet-600/40 transition-colors disabled:opacity-50">
+              {invited ? "Invited" : sending ? "…" : "Invite"}
+            </button>
+          </div>
         )}
       </div>
     </div>
@@ -190,11 +228,14 @@ function empFromDb(v: string | null | undefined): EmploymentType {
   return "casual";
 }
 
-function StaffDetailModal({ staff, promoterId, onClose }: {
+function StaffDetailModal({ staff, promoterId, onClose, onChanged }: {
   staff: PromoterStaff;
   promoterId: string;
   onClose: () => void;
+  onChanged: () => void;
 }) {
+  const [lockRow, setLockRow] = useState<LockRow | null>(null);
+  const [breakConfirm, setBreakConfirm] = useState(false);
   const [shiftCount, setShiftCount] = useState<number | null>(null);
   const [noShowCount, setNoShowCount] = useState<number | null>(null);
   const [payRates, setPayRates] = useState<PayRateRow[]>([]);
@@ -215,9 +256,10 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
         supabase.from("pay_rates").select("base_rate, saturday_rate, public_holiday_rate, award_code").eq("vendor_id", promoterId).maybeSingle(),
         supabase.from("staff_profiles").select("date_of_birth, no_show_count").eq("user_id", staff.user_id).maybeSingle(),
         supabase.from("promoter_profiles").select("show_penalty_rates").eq("user_id", promoterId).maybeSingle(),
-        supabase.from("promoter_staff").select("employment_type, award").eq("id", staff.id).maybeSingle(),
+        supabase.from("promoter_staff").select("employment_type, award, lock_accepted, lock_broken_by_staff, lock_start_date, lock_duration_months").eq("id", staff.id).maybeSingle(),
       ]);
-      const ps = psRes.data as { employment_type: string | null; award: string | null } | null;
+      const ps = psRes.data as ({ employment_type: string | null; award: string | null } & LockRow) | null;
+      setLockRow(ps);
       const defaultAward = (defRes.data as { award_code: string | null } | null)?.award_code ?? null;
       setShiftCount(shiftRes.count ?? 0);
       setPayRates((ratesRes.data as PayRateRow[]) ?? []);
@@ -273,6 +315,14 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
       .eq("id", staff.id);
   }
 
+  // Break an active exclusivity lock: soft-remove and record the broken lock.
+  async function breakLock() {
+    await createClient().from("promoter_staff").update({ status: "inactive", lock_broken_by_staff: true }).eq("id", staff.id);
+    await notifyUser(promoterId, "Exclusivity Lock Broken", "A staff member has broken their exclusivity lock early", { type: "lock_broken" });
+    onChanged();
+    onClose();
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-4 pb-4 sm:pb-0">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
@@ -286,6 +336,23 @@ function StaffDetailModal({ staff, promoterId, onClose }: {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
+
+        {isLockActive(lockRow) && (
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.06] p-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold text-amber-400">🔒 Exclusivity Lock active</p>
+              {lockExpiry(lockRow) && <p className="text-[11px] text-zinc-500 mt-0.5">Until {lockExpiry(lockRow)}</p>}
+            </div>
+            {breakConfirm ? (
+              <div className="flex items-center gap-2 shrink-0">
+                <button onClick={breakLock} className="text-xs font-medium text-rose-400 hover:text-rose-300 transition-colors">Confirm break</button>
+                <button onClick={() => setBreakConfirm(false)} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">Cancel</button>
+              </div>
+            ) : (
+              <button onClick={() => setBreakConfirm(true)} className="shrink-0 rounded-md border border-rose-500/30 text-rose-400 px-2.5 py-1 text-xs font-semibold hover:bg-rose-500/10 transition-colors">Break Lock</button>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-3 gap-3">
           <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3 text-center">
@@ -409,42 +476,44 @@ export default function StaffPage() {
   const [showInvite, setShowInvite] = useState(false);
   const [selected, setSelected] = useState<PromoterStaff | null>(null);
 
-  useEffect(() => {
+  const loadStaff = useCallback(async () => {
     if (!user) return;
-    async function load() {
-      const supabase = createClient();
-      const { data: psData } = await supabase
-        .from("promoter_staff")
-        .select("id, user_id, status, created_at")
-        .eq("promoter_id", user!.id)
-        .order("created_at", { ascending: false });
+    setDataLoading(true);
+    const supabase = createClient();
+    const { data: psData } = await supabase
+      .from("promoter_staff")
+      .select("id, user_id, status, created_at, lock_accepted, lock_broken_by_staff, lock_start_date, lock_duration_months")
+      .eq("promoter_id", user.id)
+      .neq("status", "inactive")
+      .order("created_at", { ascending: false });
 
-      const rows = (psData as { id: string; user_id: string; status: string; created_at: string }[]) ?? [];
-      const userIds = rows.map((r) => r.user_id).filter(Boolean);
+    const rows = (psData ?? []) as any[];
+    const userIds = rows.map((r) => r.user_id).filter(Boolean);
+    if (userIds.length === 0) { setStaff([]); setDataLoading(false); return; }
 
-      if (userIds.length === 0) { setStaff([]); setDataLoading(false); return; }
+    const [usersRes, spRes, ratingsRes] = await Promise.all([
+      supabase.from("users").select("id, full_name, email").in("id", userIds),
+      supabase.from("staff_profiles").select("user_id, full_name, username").in("user_id", userIds),
+      supabase.from("user_ratings_summary").select("user_id, average_stars").in("user_id", userIds),
+    ]);
 
-      const [usersRes, spRes, ratingsRes] = await Promise.all([
-        supabase.from("users").select("id, full_name, email").in("id", userIds),
-        supabase.from("staff_profiles").select("user_id, full_name, username").in("user_id", userIds),
-        supabase.from("user_ratings_summary").select("user_id, average_stars").in("user_id", userIds),
-      ]);
+    const usersMap = Object.fromEntries(((usersRes.data ?? []) as { id: string; full_name: string; email: string }[]).map((u) => [u.id, u]));
+    const spMap = Object.fromEntries(((spRes.data ?? []) as { user_id: string; full_name: string; username: string | null }[]).map((p) => [p.user_id, p]));
+    const ratingMap = Object.fromEntries(((ratingsRes.data ?? []) as { user_id: string; average_stars: number }[]).map((r) => [r.user_id, r.average_stars]));
 
-      const usersMap = Object.fromEntries(((usersRes.data ?? []) as { id: string; full_name: string; email: string }[]).map((u) => [u.id, u]));
-      const spMap = Object.fromEntries(((spRes.data ?? []) as { user_id: string; full_name: string; username: string | null }[]).map((p) => [p.user_id, p]));
-      const ratingMap = Object.fromEntries(((ratingsRes.data ?? []) as { user_id: string; average_stars: number }[]).map((r) => [r.user_id, r.average_stars]));
+    setStaff(rows.map((r) => ({
+      id: r.id, user_id: r.user_id, status: r.status, created_at: r.created_at,
+      full_name: spMap[r.user_id]?.full_name ?? usersMap[r.user_id]?.full_name ?? r.user_id,
+      email: usersMap[r.user_id]?.email ?? null,
+      username: spMap[r.user_id]?.username ?? null,
+      avg_stars: ratingMap[r.user_id] ?? null,
+      lock_active: isLockActive(r),
+      lock_expiry: lockExpiry(r),
+    })));
+    setDataLoading(false);
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-      setStaff(rows.map((r) => ({
-        id: r.id, user_id: r.user_id, status: r.status, created_at: r.created_at,
-        full_name: spMap[r.user_id]?.full_name ?? usersMap[r.user_id]?.full_name ?? r.user_id,
-        email: usersMap[r.user_id]?.email ?? null,
-        username: spMap[r.user_id]?.username ?? null,
-        avg_stars: ratingMap[r.user_id] ?? null,
-      })));
-      setDataLoading(false);
-    }
-    load();
-  }, [user?.id]);
+  useEffect(() => { loadStaff(); }, [loadStaff]);
 
   async function deleteStaff(id: string) {
     await createClient().from("promoter_staff").delete().eq("id", id);
@@ -458,10 +527,10 @@ export default function StaffPage() {
   return (
     <>
       {showInvite && user && (
-        <InviteModal promoterId={user.id} onInvited={(s) => setStaff((p) => [...p, s])} onClose={() => setShowInvite(false)} />
+        <InviteModal promoterId={user.id} onInvited={() => loadStaff()} onClose={() => setShowInvite(false)} />
       )}
       {selected && user && (
-        <StaffDetailModal staff={selected} promoterId={user.id} onClose={() => setSelected(null)} />
+        <StaffDetailModal staff={selected} promoterId={user.id} onClose={() => setSelected(null)} onChanged={loadStaff} />
       )}
 
       <div className="max-w-3xl mx-auto px-5 py-8">
@@ -496,7 +565,10 @@ export default function StaffPage() {
                   {s.full_name.charAt(0).toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-white text-sm">{s.full_name}</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-semibold text-white text-sm">{s.full_name}</p>
+                    {s.lock_active && <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-400">🔒 Locked</span>}
+                  </div>
                   {s.username && <p className="text-xs text-zinc-500">@{s.username}</p>}
                   <Stars rating={s.avg_stars} />
                 </div>

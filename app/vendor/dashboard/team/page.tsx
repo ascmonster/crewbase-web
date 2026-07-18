@@ -18,6 +18,32 @@ import { awardCodeForName, calculateAge } from "@/lib/getAwardRates";
 
 type Tab = "staff" | "schedule" | "timesheets" | "invoices" | "payroll";
 
+// ── Exclusivity lock helpers ────────────────────────────────────────────────
+const LOCK_DURATIONS = [3, 6, 12];
+
+// A lock is active while accepted, not broken, and still within its term
+// (today < lock_start_date + lock_duration_months).
+function isLockActive(row: any): boolean {
+  if (!row || row.lock_accepted !== true || row.lock_broken_by_staff === true) return false;
+  if (!row.lock_start_date || row.lock_duration_months == null) return false;
+  const [y, m, d] = String(row.lock_start_date).slice(0, 10).split("-").map(Number);
+  const end = new Date(y, m - 1, d);
+  end.setMonth(end.getMonth() + row.lock_duration_months);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return today < end;
+}
+function lockExpiry(row: any): string | null {
+  if (!row?.lock_start_date || row?.lock_duration_months == null) return null;
+  const [y, m, d] = String(row.lock_start_date).slice(0, 10).split("-").map(Number);
+  const end = new Date(y, m - 1, d);
+  end.setMonth(end.getMonth() + row.lock_duration_months);
+  return end.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
+}
+async function notifyUser(userId: string | null, title: string, body: string, data: Record<string, unknown> = {}) {
+  if (!userId) return;
+  try { await createClient().functions.invoke("send-push-notification", { body: { userId, title, body, data } }); } catch { /* non-fatal */ }
+}
+
 // ── Shared helpers ─────────────────────────────────────────────────────────
 
 const AVATAR_COLORS = ["#8b5cf6", "#3498db", "#7c3aed", "#E91E8C", "#1abc9c", "#FF6B35"];
@@ -137,68 +163,129 @@ type Member = {
   abn_verified: boolean;
   abn_business_name: string | null;
   date_of_birth: string | null;
+  lock_active: boolean;
+  lock_expiry: string | null;
 };
 type TeamRequest = { id: string; staff_id: string; full_name: string; username: string | null };
 
+type InviteResult = { staff_id: string; user_id: string; full_name: string; username: string | null };
+
 function InviteModal({ vendorId, onClose }: { vendorId: string; onClose: () => void }) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<{ staff_id: string; full_name: string; username: string | null }[]>([]);
   const [searching, setSearching] = useState(false);
-  const [invited, setInvited] = useState<Set<string>>(new Set());
+  const [result, setResult] = useState<InviteResult | null>(null);
+  const [notFound, setNotFound] = useState(false);
+  const [lockBlocked, setLockBlocked] = useState(false);
+  const [lockEnabled, setLockEnabled] = useState(false);
+  const [lockMonths, setLockMonths] = useState(6);
+  const [sending, setSending] = useState(false);
+  const [invited, setInvited] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  function resetSearch() { setResult(null); setNotFound(false); setLockBlocked(false); setInvited(false); setErr(null); }
 
   async function search() {
     if (!query.trim()) return;
-    setSearching(true);
+    setSearching(true); resetSearch();
     const supabase = createClient();
     const q = query.trim().replace(/^@/, "");
-    const [spRes, uRes] = await Promise.all([
-      supabase.from("staff_profiles").select("user_id, full_name, username").or(`username.ilike.%${q}%,full_name.ilike.%${q}%`).limit(8),
-      supabase.from("users").select("id, full_name, email").ilike("email", `%${q}%`).limit(8),
-    ]);
-    const map: Record<string, { staff_id: string; full_name: string; username: string | null }> = {};
-    for (const r of (spRes.data ?? []) as any[]) map[r.user_id] = { staff_id: r.user_id, full_name: r.full_name, username: r.username };
-    for (const u of (uRes.data ?? []) as any[]) if (!map[u.id]) map[u.id] = { staff_id: u.id, full_name: u.full_name, username: null };
-    setResults(Object.values(map));
+    let profile: any = null;
+    const { data: byU } = await supabase.from("staff_profiles").select("user_id, full_name, username").ilike("username", `%${q}%`).limit(1);
+    if (byU && byU.length) profile = byU[0];
+    else {
+      const { data: userRow } = await supabase.from("users").select("id, full_name").eq("email", q).maybeSingle();
+      if (userRow) {
+        const { data: sp } = await supabase.from("staff_profiles").select("user_id, full_name, username").eq("user_id", (userRow as any).id).maybeSingle();
+        profile = sp ?? { user_id: (userRow as any).id, full_name: (userRow as any).full_name ?? q, username: null };
+      }
+    }
+    if (!profile) { setNotFound(true); setSearching(false); return; }
+    // Can't offer a lock to someone who previously broke one with us.
+    const { data: broken } = await supabase.from("staff_vendor_assignments").select("id").eq("vendor_id", vendorId).eq("staff_id", profile.user_id).eq("lock_broken_by_staff", true).maybeSingle();
+    if (broken) { setLockBlocked(true); setLockEnabled(false); }
+    setResult({ staff_id: profile.user_id, user_id: profile.user_id, full_name: profile.full_name, username: profile.username ?? null });
     setSearching(false);
   }
 
-  async function invite(staffId: string) {
-    await createClient().from("team_invites").insert({ vendor_id: vendorId, staff_id: staffId });
-    setInvited((prev) => new Set(prev).add(staffId));
+  async function invite() {
+    if (!result) return;
+    setSending(true); setErr(null);
+    const supabase = createClient();
+    const lockVal = lockEnabled && !lockBlocked ? lockMonths : null;
+    // Reset a prior team_invites row (unique vendor_id+staff_id) to pending, else insert.
+    const { data: existing } = await supabase.from("team_invites").select("id").eq("vendor_id", vendorId).eq("staff_id", result.staff_id).maybeSingle();
+    const { error } = existing
+      ? await supabase.from("team_invites").update({ status: "pending", lock_duration_months: lockVal, created_at: new Date().toISOString() }).eq("vendor_id", vendorId).eq("staff_id", result.staff_id)
+      : await supabase.from("team_invites").insert({ vendor_id: vendorId, staff_id: result.staff_id, status: "pending", lock_duration_months: lockVal });
+    setSending(false);
+    if (error) { setErr(error.code === "23505" ? "This staff member already has a pending or accepted invite from you." : error.message); return; }
+    await notifyUser(result.user_id, "Team Invite", "You've been invited to join a team on Crewbase!", { type: "team_invite" });
+    setInvited(true);
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/70">
-      <div className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-[#141414] p-6">
+      <div className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-[#141414] p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
-          <h3 className="font-semibold text-white">Invite Team Members</h3>
+          <h3 className="font-semibold text-white">Invite Team Member</h3>
           <button onClick={onClose} className="text-zinc-500 hover:text-white transition-colors">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
         <div className="flex gap-2 mb-4">
-          <input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()}
+          <input value={query} onChange={(e) => { setQuery(e.target.value); resetSearch(); }} onKeyDown={(e) => e.key === "Enter" && search()}
             placeholder="@username or email"
             className="flex-1 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-[#FF6B35] transition-colors" />
-          <button onClick={search} disabled={searching} className="rounded-lg bg-[#FF6B35] px-4 py-2 text-sm font-semibold text-white hover:bg-[#ff7d4d] transition-colors disabled:opacity-50">
+          <button onClick={search} disabled={searching || !query.trim()} className="rounded-lg bg-[#FF6B35] px-4 py-2 text-sm font-semibold text-white hover:bg-[#ff7d4d] transition-colors disabled:opacity-50">
             {searching ? "…" : "Search"}
           </button>
         </div>
-        <div className="flex flex-col gap-2">
-          {results.map((r) => (
-            <div key={r.staff_id} className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
-              <Avatar name={r.full_name} colorKey={r.staff_id} size={36} />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-white truncate">{r.full_name}</p>
-                {r.username && <p className="text-xs text-zinc-500">@{r.username}</p>}
+
+        {/* Exclusivity lock proposal */}
+        {lockBlocked ? (
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2.5 mb-4">
+            <p className="text-xs text-amber-400">Exclusivity lock unavailable — this staff member previously broke a lock with you.</p>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-3 mb-4 flex flex-col gap-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-white">Exclusivity Lock</p>
+                <p className="text-xs text-zinc-500 mt-0.5">Staff will only see jobs from your team during the lock period</p>
               </div>
-              <button onClick={() => invite(r.staff_id)} disabled={invited.has(r.staff_id)}
-                className="rounded-lg bg-[#FF6B35]/15 border border-[#FF6B35]/30 text-[#FF6B35] px-3 py-1 text-xs font-semibold hover:bg-[#FF6B35]/25 transition-colors disabled:opacity-50">
-                {invited.has(r.staff_id) ? "Invited" : "Invite"}
+              <button type="button" onClick={() => setLockEnabled((v) => !v)}
+                className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${lockEnabled ? "bg-[#FF6B35]" : "bg-white/[0.12]"}`}>
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${lockEnabled ? "translate-x-5" : ""}`} />
               </button>
             </div>
-          ))}
-        </div>
+            {lockEnabled && (
+              <div className="flex items-center gap-2">
+                {LOCK_DURATIONS.map((m) => (
+                  <button key={m} type="button" onClick={() => setLockMonths(m)}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${lockMonths === m ? "bg-[#FF6B35] text-white" : "border border-white/[0.12] text-zinc-400 hover:text-white"}`}>
+                    {m} months
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {notFound && <p className="text-xs text-zinc-500 py-2">No staff member found with that username or email.</p>}
+        {result && (
+          <div className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
+            <Avatar name={result.full_name} colorKey={result.staff_id} size={36} />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-white truncate">{result.full_name}</p>
+              {result.username && <p className="text-xs text-zinc-500">@{result.username}</p>}
+            </div>
+            <button onClick={invite} disabled={sending || invited}
+              className="rounded-lg bg-[#FF6B35]/15 border border-[#FF6B35]/30 text-[#FF6B35] px-3 py-1 text-xs font-semibold hover:bg-[#FF6B35]/25 transition-colors disabled:opacity-50">
+              {invited ? "Invited" : sending ? "…" : "Invite"}
+            </button>
+          </div>
+        )}
+        {err && <p className="text-xs text-red-400 mt-2">{err}</p>}
       </div>
     </div>
   );
@@ -258,6 +345,7 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
   const [payEditFor, setPayEditFor] = useState<string | null>(null);
   const [vendorAwardCode, setVendorAwardCode] = useState<string | null>(null);
   const [showPenaltyRates, setShowPenaltyRates] = useState(false);
+  const [breakConfirm, setBreakConfirm] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -271,7 +359,7 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
     setVendorAwardCode((vendorRateRes.data as any)?.award_code ?? null);
     setShowPenaltyRates((vendorProfRes.data as any)?.show_penalty_rates === true);
 
-    const { data: svaRows } = await supabase.from("staff_vendor_assignments").select("*").eq("vendor_id", vendorId);
+    const { data: svaRows } = await supabase.from("staff_vendor_assignments").select("*").eq("vendor_id", vendorId).neq("status", "inactive");
     const rows = (svaRows ?? []) as any[];
     const staffIds = [...new Set(rows.map((r) => r.staff_id).filter(Boolean))];
 
@@ -319,6 +407,8 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
       abn_verified: spByUser[r.staff_id]?.abn_verified === true,
       abn_business_name: spByUser[r.staff_id]?.abn_business_name ?? null,
       date_of_birth: spByUser[r.staff_id]?.date_of_birth ?? null,
+      lock_active: isLockActive(r),
+      lock_expiry: lockExpiry(r),
     })));
 
     // Pending requests + names
@@ -361,6 +451,15 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
     }
     await supabase.from("staff_profiles").update({ is_manager: next }).eq("user_id", m.staff_id);
     setMembers((prev) => prev.map((x) => (x.staff_id === m.staff_id ? { ...x, is_manager: next } : x)));
+  }
+
+  // Break an active exclusivity lock: soft-remove the assignment (status
+  // inactive) and record the broken lock so it can never be re-offered.
+  async function breakLock(m: Member) {
+    await createClient().from("staff_vendor_assignments").update({ status: "inactive", lock_broken_by_staff: true }).eq("vendor_id", vendorId).eq("staff_id", m.staff_id);
+    await notifyUser(vendorId, "Exclusivity Lock Broken", "A staff member has broken their exclusivity lock early", { type: "lock_broken" });
+    setBreakConfirm(null);
+    setMembers((prev) => prev.filter((x) => x.staff_id !== m.staff_id));
   }
 
   async function removeMember(staffId: string) {
@@ -443,6 +542,7 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
                       {m.classification === "contractor" ? "Contractor" : "Employee"}
                     </span>
                     {m.is_manager && <span className="rounded-full bg-[#FF6B35]/15 px-2 py-0.5 text-[10px] font-semibold text-[#FF6B35]">MANAGER</span>}
+                    {m.lock_active && <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-400">🔒 Locked</span>}
                   </div>
                   <p className="text-xs text-zinc-500">
                     {m.username ? `@${m.username}` : ""}
@@ -520,6 +620,24 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
                   </div>
                 )}
               </div>
+
+              {m.lock_active && (
+                <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/[0.06] p-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold text-amber-400">🔒 Exclusivity Lock active</p>
+                    {m.lock_expiry && <p className="text-[11px] text-zinc-500 mt-0.5">Until {m.lock_expiry}</p>}
+                  </div>
+                  {breakConfirm === m.staff_id ? (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-[11px] text-zinc-400">This removes them from your team &amp; the lock can&apos;t be re-offered.</span>
+                      <button onClick={() => breakLock(m)} className="text-xs font-medium text-rose-400 hover:text-rose-300 transition-colors">Confirm</button>
+                      <button onClick={() => setBreakConfirm(null)} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">Cancel</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setBreakConfirm(m.staff_id)} className="shrink-0 rounded-md border border-rose-500/30 text-rose-400 px-2.5 py-1 text-xs font-semibold hover:bg-rose-500/10 transition-colors">Break Lock</button>
+                  )}
+                </div>
+              )}
 
               {payEditFor === m.staff_id && (
                 <PayOverrideEditor
