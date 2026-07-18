@@ -711,6 +711,7 @@ export default function VendorSettingsPage() {
               awardCode={awardCode}
               enteredRate={rates.base_rate.trim() === "" ? null : parseFloat(rates.base_rate)}
               showPenaltyRates={showPenaltyRates}
+              employmentType={employmentType}
               accent="orange"
             />
 

@@ -227,6 +227,7 @@ export default function PayRatesPage() {
             awardCode={awardCode}
             enteredRate={weekday.trim() === "" ? null : parseFloat(weekday)}
             showPenaltyRates={showPenaltyRates}
+            employmentType={employmentType}
             accent="violet"
           />
 
