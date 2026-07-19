@@ -250,27 +250,39 @@ function StaffDetailModal({ staff, promoterId, onClose, onChanged }: {
   useEffect(() => {
     async function load() {
       const supabase = createClient();
-      const [shiftRes, ratesRes, defRes, dobRes, profRes, psRes] = await Promise.all([
-        supabase.from("shifts").select("id", { count: "exact", head: true }).eq("staff_id", staff.user_id),
-        supabase.from("staff_pay_rates").select("rate_type, hourly_rate").eq("vendor_id", promoterId).eq("staff_id", staff.user_id),
-        supabase.from("pay_rates").select("base_rate, saturday_rate, public_holiday_rate, award_code").eq("vendor_id", promoterId).maybeSingle(),
-        supabase.from("staff_profiles").select("date_of_birth, no_show_count").eq("user_id", staff.user_id).maybeSingle(),
-        supabase.from("promoter_profiles").select("show_penalty_rates").eq("user_id", promoterId).maybeSingle(),
-        supabase.from("promoter_staff").select("employment_type, award, lock_accepted, lock_broken_by_staff, lock_start_date, lock_duration_months").eq("id", staff.id).maybeSingle(),
-      ]);
-      const ps = psRes.data as ({ employment_type: string | null; award: string | null } & LockRow) | null;
-      setLockRow(ps);
-      const defaultAward = (defRes.data as { award_code: string | null } | null)?.award_code ?? null;
-      setShiftCount(shiftRes.count ?? 0);
-      setPayRates((ratesRes.data as PayRateRow[]) ?? []);
-      setDefaults((defRes.data as DefaultPayRate | null) ?? null);
-      // Per-staff award if set, otherwise fall back to the promoter's default.
-      setAwardCode(ps?.award ?? defaultAward);
-      const sp = dobRes.data as { date_of_birth: string | null; no_show_count: number | null } | null;
-      setStaffAge(calculateAge(sp?.date_of_birth));
-      setNoShowCount(sp?.no_show_count ?? 0);
-      setShowPenaltyRates((profRes.data as { show_penalty_rates: boolean } | null)?.show_penalty_rates === true);
-      setEmploymentType(empFromDb(ps?.employment_type));
+      // All queries here are secondary detail — degrade silently on failure so
+      // one bad lookup doesn't break the whole modal.
+      try {
+        const [shiftRes, ratesRes, defRes, dobRes, profRes, psRes] = await Promise.all([
+          supabase.from("shifts").select("id", { count: "exact", head: true }).eq("staff_id", staff.user_id),
+          supabase.from("staff_pay_rates").select("rate_type, hourly_rate").eq("vendor_id", promoterId).eq("staff_id", staff.user_id),
+          supabase.from("pay_rates").select("base_rate, saturday_rate, public_holiday_rate, award_code").eq("vendor_id", promoterId).maybeSingle(),
+          supabase.from("staff_profiles").select("date_of_birth, no_show_count").eq("user_id", staff.user_id).maybeSingle(),
+          supabase.from("promoter_profiles").select("show_penalty_rates").eq("user_id", promoterId).maybeSingle(),
+          supabase.from("promoter_staff").select("employment_type, award, lock_accepted, lock_broken_by_staff, lock_start_date, lock_duration_months").eq("id", staff.id).maybeSingle(),
+        ]);
+        if (shiftRes.error) console.error("[StaffDetail] shift count failed:", shiftRes.error.message);
+        if (ratesRes.error) console.error("[StaffDetail] pay rates failed:", ratesRes.error.message);
+        if (defRes.error) console.error("[StaffDetail] default rates failed:", defRes.error.message);
+        if (dobRes.error) console.error("[StaffDetail] profile failed:", dobRes.error.message);
+        if (profRes.error) console.error("[StaffDetail] promoter profile failed:", profRes.error.message);
+        if (psRes.error) console.error("[StaffDetail] promoter_staff failed:", psRes.error.message);
+        const ps = psRes.data as ({ employment_type: string | null; award: string | null } & LockRow) | null;
+        setLockRow(ps);
+        const defaultAward = (defRes.data as { award_code: string | null } | null)?.award_code ?? null;
+        setShiftCount(shiftRes.count ?? 0);
+        setPayRates((ratesRes.data as PayRateRow[]) ?? []);
+        setDefaults((defRes.data as DefaultPayRate | null) ?? null);
+        // Per-staff award if set, otherwise fall back to the promoter's default.
+        setAwardCode(ps?.award ?? defaultAward);
+        const sp = dobRes.data as { date_of_birth: string | null; no_show_count: number | null } | null;
+        setStaffAge(calculateAge(sp?.date_of_birth));
+        setNoShowCount(sp?.no_show_count ?? 0);
+        setShowPenaltyRates((profRes.data as { show_penalty_rates: boolean } | null)?.show_penalty_rates === true);
+        setEmploymentType(empFromDb(ps?.employment_type));
+      } catch (e) {
+        console.error("[StaffDetail] load failed:", e instanceof Error ? e.message : e);
+      }
     }
     load();
   }, [staff.user_id, promoterId, staff.id]);
@@ -473,33 +485,57 @@ export default function StaffPage() {
   const { user, loading: authLoading } = useRequireAuth();
   const [staff, setStaff] = useState<PromoterStaff[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [selected, setSelected] = useState<PromoterStaff | null>(null);
 
   const loadStaff = useCallback(async () => {
     if (!user) return;
     setDataLoading(true);
+    setLoadError(false);
     const supabase = createClient();
-    const { data: psData } = await supabase
-      .from("promoter_staff")
-      .select("id, user_id, status, created_at, lock_accepted, lock_broken_by_staff, lock_start_date, lock_duration_months")
-      .eq("promoter_id", user.id)
-      .neq("status", "inactive")
-      .order("created_at", { ascending: false });
 
-    const rows = (psData ?? []) as any[];
+    // Primary: the roster itself. A failure here shows the error state.
+    let rows: any[] = [];
+    try {
+      const { data: psData, error } = await supabase
+        .from("promoter_staff")
+        .select("id, user_id, status, created_at, lock_accepted, lock_broken_by_staff, lock_start_date, lock_duration_months")
+        .eq("promoter_id", user.id)
+        .neq("status", "inactive")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      rows = (psData ?? []) as any[];
+    } catch (e) {
+      console.error("[Staff] roster load failed:", e instanceof Error ? e.message : e);
+      setLoadError(true);
+      setDataLoading(false);
+      return;
+    }
+
     const userIds = rows.map((r) => r.user_id).filter(Boolean);
     if (userIds.length === 0) { setStaff([]); setDataLoading(false); return; }
 
-    const [usersRes, spRes, ratingsRes] = await Promise.all([
-      supabase.from("users").select("id, full_name, email").in("id", userIds),
-      supabase.from("staff_profiles").select("user_id, full_name, username").in("user_id", userIds),
-      supabase.from("user_ratings_summary").select("user_id, average_stars").in("user_id", userIds),
-    ]);
-
-    const usersMap = Object.fromEntries(((usersRes.data ?? []) as { id: string; full_name: string; email: string }[]).map((u) => [u.id, u]));
-    const spMap = Object.fromEntries(((spRes.data ?? []) as { user_id: string; full_name: string; username: string | null }[]).map((p) => [p.user_id, p]));
-    const ratingMap = Object.fromEntries(((ratingsRes.data ?? []) as { user_id: string; average_stars: number }[]).map((r) => [r.user_id, r.average_stars]));
+    // Secondary: names, emails, ratings. Degrade silently — a failure just
+    // falls back to the user id / null rating rather than blanking the roster.
+    let usersMap: Record<string, { id: string; full_name: string; email: string }> = {};
+    let spMap: Record<string, { user_id: string; full_name: string; username: string | null }> = {};
+    let ratingMap: Record<string, number> = {};
+    try {
+      const [usersRes, spRes, ratingsRes] = await Promise.all([
+        supabase.from("users").select("id, full_name, email").in("id", userIds),
+        supabase.from("staff_profiles").select("user_id, full_name, username").in("user_id", userIds),
+        supabase.from("user_ratings_summary").select("user_id, average_stars").in("user_id", userIds),
+      ]);
+      if (usersRes.error) console.error("[Staff] users lookup failed:", usersRes.error.message);
+      if (spRes.error) console.error("[Staff] staff_profiles lookup failed:", spRes.error.message);
+      if (ratingsRes.error) console.error("[Staff] ratings lookup failed:", ratingsRes.error.message);
+      usersMap = Object.fromEntries(((usersRes.data ?? []) as { id: string; full_name: string; email: string }[]).map((u) => [u.id, u]));
+      spMap = Object.fromEntries(((spRes.data ?? []) as { user_id: string; full_name: string; username: string | null }[]).map((p) => [p.user_id, p]));
+      ratingMap = Object.fromEntries(((ratingsRes.data ?? []) as { user_id: string; average_stars: number }[]).map((r) => [r.user_id, r.average_stars]));
+    } catch (e) {
+      console.error("[Staff] staff detail load failed:", e instanceof Error ? e.message : e);
+    }
 
     setStaff(rows.map((r) => ({
       id: r.id, user_id: r.user_id, status: r.status, created_at: r.created_at,
@@ -522,6 +558,10 @@ export default function StaffPage() {
 
   if (authLoading || dataLoading) {
     return <div className="flex items-center justify-center h-64"><span className="text-zinc-500 text-sm">Loading…</span></div>;
+  }
+
+  if (loadError) {
+    return <div className="flex items-center justify-center h-64"><span className="text-zinc-500 text-sm">Couldn&apos;t load staff. Please refresh to try again.</span></div>;
   }
 
   return (

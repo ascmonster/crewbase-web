@@ -268,6 +268,7 @@ export default function SchedulePage() {
   const [truckMap, setTruckMap] = useState<Record<string, string>>({});
   const [staffRateMap, setStaffRateMap] = useState<Record<string, number>>({});
   const [dataLoading, setDataLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [modal, setModal] = useState<{ existing: Schedule | null; date: string } | null>(null);
 
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(anchor, i));
@@ -281,21 +282,31 @@ export default function SchedulePage() {
     if (!user) return;
     async function loadRefs() {
       const supabase = createClient();
-      const { data: ps } = await supabase.from("promoter_staff").select("user_id").eq("promoter_id", user!.id).eq("status", "active");
-      const staffIds = ((ps ?? []) as { user_id: string }[]).map((r) => r.user_id);
-      const [spRes, tRes, rRes] = await Promise.all([
-        staffIds.length ? supabase.from("staff_profiles").select("user_id, full_name, username").in("user_id", staffIds) : Promise.resolve({ data: [] as any[] }),
-        supabase.from("vendor_trucks").select("id, name").eq("vendor_id", user!.id).order("name", { ascending: true }),
-        staffIds.length ? supabase.from("staff_pay_rates").select("staff_id, hourly_rate").eq("vendor_id", user!.id).eq("rate_type", "weekday").in("staff_id", staffIds) : Promise.resolve({ data: [] as any[] }),
-      ]);
-      setAcceptedStaff((spRes.data as AcceptedStaff[]) ?? []);
-      setTrucks((tRes.data ?? []) as TruckOption[]);
-      const tMap: Record<string, string> = {};
-      for (const t of (tRes.data ?? []) as any[]) tMap[t.id] = t.name;
-      setTruckMap(tMap);
-      const rMap: Record<string, number> = {};
-      for (const r of (rRes.data ?? []) as any[]) rMap[r.staff_id] = Number(r.hourly_rate);
-      setStaffRateMap(rMap);
+      // Reference data (staff picker, trucks, default rates) is all secondary —
+      // degrade silently so a failure here doesn't break the schedule view.
+      try {
+        const { data: ps, error: psErr } = await supabase.from("promoter_staff").select("user_id").eq("promoter_id", user!.id).eq("status", "active");
+        if (psErr) throw psErr;
+        const staffIds = ((ps ?? []) as { user_id: string }[]).map((r) => r.user_id);
+        const [spRes, tRes, rRes] = await Promise.all([
+          staffIds.length ? supabase.from("staff_profiles").select("user_id, full_name, username").in("user_id", staffIds) : Promise.resolve({ data: [] as any[], error: null }),
+          supabase.from("vendor_trucks").select("id, name").eq("vendor_id", user!.id).order("name", { ascending: true }),
+          staffIds.length ? supabase.from("staff_pay_rates").select("staff_id, hourly_rate").eq("vendor_id", user!.id).eq("rate_type", "weekday").in("staff_id", staffIds) : Promise.resolve({ data: [] as any[], error: null }),
+        ]);
+        if (spRes.error) console.error("[PromoterSchedule] staff profiles failed:", spRes.error.message);
+        if (tRes.error) console.error("[PromoterSchedule] trucks failed:", tRes.error.message);
+        if (rRes.error) console.error("[PromoterSchedule] pay rates failed:", rRes.error.message);
+        setAcceptedStaff((spRes.data as AcceptedStaff[]) ?? []);
+        setTrucks((tRes.data ?? []) as TruckOption[]);
+        const tMap: Record<string, string> = {};
+        for (const t of (tRes.data ?? []) as any[]) tMap[t.id] = t.name;
+        setTruckMap(tMap);
+        const rMap: Record<string, number> = {};
+        for (const r of (rRes.data ?? []) as any[]) rMap[r.staff_id] = Number(r.hourly_rate);
+        setStaffRateMap(rMap);
+      } catch (e) {
+        console.error("[PromoterSchedule] reference data load failed:", e instanceof Error ? e.message : e);
+      }
     }
     loadRefs();
   }, [user?.id]);
@@ -304,18 +315,37 @@ export default function SchedulePage() {
   const loadSchedules = useCallback(async () => {
     if (!user) return;
     setDataLoading(true);
+    setLoadError(false);
     const supabase = createClient();
-    const { data } = await supabase
-      .from("schedules")
-      .select("id, staff_id, shift_date, start_time, end_time, role, notes, status, truck_id, pay_rate")
-      .eq("vendor_id", user.id).gte("shift_date", range.from).lte("shift_date", range.to)
-      .order("shift_date").order("start_time");
-    const rows = (data ?? []) as Omit<Schedule, "full_name">[];
+
+    // Primary: schedules for the visible range. A failure here shows the error state.
+    let rows: Omit<Schedule, "full_name">[] = [];
+    try {
+      const { data, error } = await supabase
+        .from("schedules")
+        .select("id, staff_id, shift_date, start_time, end_time, role, notes, status, truck_id, pay_rate")
+        .eq("vendor_id", user.id).gte("shift_date", range.from).lte("shift_date", range.to)
+        .order("shift_date").order("start_time");
+      if (error) throw error;
+      rows = (data ?? []) as Omit<Schedule, "full_name">[];
+    } catch (e) {
+      console.error("[PromoterSchedule] schedules load failed:", e instanceof Error ? e.message : e);
+      setLoadError(true);
+      setDataLoading(false);
+      return;
+    }
+
     const spMap = Object.fromEntries(acceptedStaff.map((s) => [s.user_id, s.full_name]));
     const unknown = [...new Set(rows.map((r) => r.staff_id).filter((id) => !spMap[id]))];
     if (unknown.length) {
-      const { data: extra } = await supabase.from("staff_profiles").select("user_id, full_name").in("user_id", unknown);
-      for (const p of (extra ?? []) as { user_id: string; full_name: string }[]) spMap[p.user_id] = p.full_name;
+      // Secondary name backfill — degrade silently, falling back to the id.
+      try {
+        const { data: extra, error } = await supabase.from("staff_profiles").select("user_id, full_name").in("user_id", unknown);
+        if (error) throw error;
+        for (const p of (extra ?? []) as { user_id: string; full_name: string }[]) spMap[p.user_id] = p.full_name;
+      } catch (e) {
+        console.error("[PromoterSchedule] staff name lookup failed:", e instanceof Error ? e.message : e);
+      }
     }
     setSchedules(rows.map((r) => ({ ...r, full_name: spMap[r.staff_id] ?? r.staff_id })));
     setDataLoading(false);
@@ -350,6 +380,10 @@ export default function SchedulePage() {
 
   if (authLoading) {
     return <div className="flex items-center justify-center h-64"><span className="text-zinc-500 text-sm">Loading…</span></div>;
+  }
+
+  if (loadError) {
+    return <div className="flex items-center justify-center h-64"><span className="text-zinc-500 text-sm">Couldn&apos;t load the schedule. Please refresh to try again.</span></div>;
   }
 
   return (

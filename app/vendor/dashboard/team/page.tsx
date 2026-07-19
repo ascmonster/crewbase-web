@@ -338,6 +338,7 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
   const [members, setMembers] = useState<Member[]>([]);
   const [requests, setRequests] = useState<TeamRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [pinFor, setPinFor] = useState<Member | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
@@ -349,43 +350,80 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(false);
     const supabase = createClient();
 
     // Vendor-level FWC preferences: default award + penalty-breakdown toggle.
-    const [vendorRateRes, vendorProfRes] = await Promise.all([
-      supabase.from("pay_rates").select("award_code").eq("vendor_id", vendorId).maybeSingle(),
-      supabase.from("vendor_profiles").select("show_penalty_rates").eq("user_id", vendorId).maybeSingle(),
-    ]);
-    setVendorAwardCode((vendorRateRes.data as any)?.award_code ?? null);
-    setShowPenaltyRates((vendorProfRes.data as any)?.show_penalty_rates === true);
+    // Secondary — degrade to defaults on failure.
+    try {
+      const [vendorRateRes, vendorProfRes] = await Promise.all([
+        supabase.from("pay_rates").select("award_code").eq("vendor_id", vendorId).maybeSingle(),
+        supabase.from("vendor_profiles").select("show_penalty_rates").eq("user_id", vendorId).maybeSingle(),
+      ]);
+      if (vendorRateRes.error) console.error("[VendorTeam] vendor award failed:", vendorRateRes.error.message);
+      if (vendorProfRes.error) console.error("[VendorTeam] vendor profile failed:", vendorProfRes.error.message);
+      setVendorAwardCode((vendorRateRes.data as any)?.award_code ?? null);
+      setShowPenaltyRates((vendorProfRes.data as any)?.show_penalty_rates === true);
+    } catch (e) {
+      console.error("[VendorTeam] vendor preferences load failed:", e instanceof Error ? e.message : e);
+    }
 
-    const { data: svaRows } = await supabase.from("staff_vendor_assignments").select("*").eq("vendor_id", vendorId).neq("status", "inactive");
-    const rows = (svaRows ?? []) as any[];
+    // Primary: the team roster. A failure here shows the error state.
+    let rows: any[] = [];
+    try {
+      const { data: svaRows, error } = await supabase.from("staff_vendor_assignments").select("*").eq("vendor_id", vendorId).neq("status", "inactive");
+      if (error) throw error;
+      rows = (svaRows ?? []) as any[];
+    } catch (e) {
+      console.error("[VendorTeam] roster load failed:", e instanceof Error ? e.message : e);
+      setLoadError(true);
+      setLoading(false);
+      return;
+    }
     const staffIds = [...new Set(rows.map((r) => r.staff_id).filter(Boolean))];
 
-    const [uRes, spRes, ratingRes, pinRes, shiftRes, payRes, reqRes, mgrRes] = await Promise.all([
-      staffIds.length ? supabase.from("users").select("id, full_name").in("id", staffIds) : Promise.resolve({ data: [] as any[] }),
-      staffIds.length ? supabase.from("staff_profiles").select("user_id, username, abn, abn_verified, abn_business_name, date_of_birth").in("user_id", staffIds) : Promise.resolve({ data: [] as any[] }),
-      staffIds.length ? supabase.from("user_ratings_summary").select("user_id, average_stars").in("user_id", staffIds) : Promise.resolve({ data: [] as any[] }),
-      supabase.from("vendor_staff_pins").select("staff_id, pin").eq("vendor_id", vendorId),
-      supabase.from("shifts").select("staff_id").eq("vendor_id", vendorId).eq("status", "completed"),
-      supabase.from("staff_pay_rates").select("staff_id, rate_type, hourly_rate").eq("vendor_id", vendorId),
-      supabase.from("vendor_team_requests").select("*").eq("vendor_id", vendorId).eq("status", "pending"),
-      supabase.from("manager_assignments").select("staff_id").eq("vendor_id", vendorId),
-    ]);
-
-    const managerSet = new Set(((mgrRes.data ?? []) as any[]).map((r) => r.staff_id));
-
-    const nameMap = Object.fromEntries(((uRes.data ?? []) as any[]).map((u) => [u.id, u.full_name]));
-    const spByUser = Object.fromEntries(((spRes.data ?? []) as any[]).map((p) => [p.user_id, p]));
-    const userMap = Object.fromEntries(((spRes.data ?? []) as any[]).map((p) => [p.user_id, p.username]));
-    const svaByStaff = Object.fromEntries(rows.map((r) => [r.staff_id, r]));
-    const ratingMap = Object.fromEntries(((ratingRes.data ?? []) as any[]).map((r) => [r.user_id, r.average_stars]));
-    const pinMap = Object.fromEntries(((pinRes.data ?? []) as any[]).map((p) => [p.staff_id, p.pin]));
+    // Secondary: names / ratings / pins / shift counts / rates / managers.
+    // Degrade silently — members still render with id fallbacks.
+    let nameMap: Record<string, any> = {}, spByUser: Record<string, any> = {}, userMap: Record<string, any> = {};
+    let ratingMap: Record<string, any> = {}, pinMap: Record<string, any> = {};
+    let managerSet = new Set<any>();
     const shiftCount: Record<string, number> = {};
-    for (const s of (shiftRes.data ?? []) as any[]) shiftCount[s.staff_id] = (shiftCount[s.staff_id] ?? 0) + 1;
     const rateMap: Record<string, Record<string, number>> = {};
-    for (const r of (payRes.data ?? []) as any[]) (rateMap[r.staff_id] ??= {})[r.rate_type] = r.hourly_rate;
+    let reqData: any[] = [];
+    try {
+      const [uRes, spRes, ratingRes, pinRes, shiftRes, payRes, reqRes, mgrRes] = await Promise.all([
+        staffIds.length ? supabase.from("users").select("id, full_name").in("id", staffIds) : Promise.resolve({ data: [] as any[], error: null }),
+        staffIds.length ? supabase.from("staff_profiles").select("user_id, username, abn, abn_verified, abn_business_name, date_of_birth").in("user_id", staffIds) : Promise.resolve({ data: [] as any[], error: null }),
+        staffIds.length ? supabase.from("user_ratings_summary").select("user_id, average_stars").in("user_id", staffIds) : Promise.resolve({ data: [] as any[], error: null }),
+        supabase.from("vendor_staff_pins").select("staff_id, pin").eq("vendor_id", vendorId),
+        supabase.from("shifts").select("staff_id").eq("vendor_id", vendorId).eq("status", "completed"),
+        supabase.from("staff_pay_rates").select("staff_id, rate_type, hourly_rate").eq("vendor_id", vendorId),
+        supabase.from("vendor_team_requests").select("*").eq("vendor_id", vendorId).eq("status", "pending"),
+        supabase.from("manager_assignments").select("staff_id").eq("vendor_id", vendorId),
+      ]);
+      if (uRes.error) console.error("[VendorTeam] names failed:", uRes.error.message);
+      if (spRes.error) console.error("[VendorTeam] staff profiles failed:", spRes.error.message);
+      if (ratingRes.error) console.error("[VendorTeam] ratings failed:", ratingRes.error.message);
+      if (pinRes.error) console.error("[VendorTeam] pins failed:", pinRes.error.message);
+      if (shiftRes.error) console.error("[VendorTeam] shift counts failed:", shiftRes.error.message);
+      if (payRes.error) console.error("[VendorTeam] pay rates failed:", payRes.error.message);
+      if (reqRes.error) console.error("[VendorTeam] team requests failed:", reqRes.error.message);
+      if (mgrRes.error) console.error("[VendorTeam] managers failed:", mgrRes.error.message);
+
+      managerSet = new Set(((mgrRes.data ?? []) as any[]).map((r) => r.staff_id));
+      nameMap = Object.fromEntries(((uRes.data ?? []) as any[]).map((u) => [u.id, u.full_name]));
+      spByUser = Object.fromEntries(((spRes.data ?? []) as any[]).map((p) => [p.user_id, p]));
+      userMap = Object.fromEntries(((spRes.data ?? []) as any[]).map((p) => [p.user_id, p.username]));
+      ratingMap = Object.fromEntries(((ratingRes.data ?? []) as any[]).map((r) => [r.user_id, r.average_stars]));
+      pinMap = Object.fromEntries(((pinRes.data ?? []) as any[]).map((p) => [p.staff_id, p.pin]));
+      for (const s of (shiftRes.data ?? []) as any[]) shiftCount[s.staff_id] = (shiftCount[s.staff_id] ?? 0) + 1;
+      for (const r of (payRes.data ?? []) as any[]) (rateMap[r.staff_id] ??= {})[r.rate_type] = r.hourly_rate;
+      reqData = (reqRes.data ?? []) as any[];
+    } catch (e) {
+      console.error("[VendorTeam] roster detail load failed:", e instanceof Error ? e.message : e);
+    }
+
+    const svaByStaff = Object.fromEntries(rows.map((r) => [r.staff_id, r]));
 
     setMembers(rows.map((r) => ({
       staff_id: r.staff_id,
@@ -411,19 +449,25 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
       lock_expiry: lockExpiry(r),
     })));
 
-    // Pending requests + names
-    const reqRows = (reqRes.data ?? []) as any[];
-    const reqIds = [...new Set(reqRows.map((r) => r.staff_id))];
-    let reqNames: Record<string, string> = {}, reqUsernames: Record<string, string> = {};
-    if (reqIds.length) {
-      const [ru, rsp] = await Promise.all([
-        supabase.from("users").select("id, full_name").in("id", reqIds),
-        supabase.from("staff_profiles").select("user_id, username").in("user_id", reqIds),
-      ]);
-      reqNames = Object.fromEntries(((ru.data ?? []) as any[]).map((u) => [u.id, u.full_name]));
-      reqUsernames = Object.fromEntries(((rsp.data ?? []) as any[]).map((p) => [p.user_id, p.username]));
+    // Pending requests + names (secondary — degrade silently).
+    try {
+      const reqRows = reqData;
+      const reqIds = [...new Set(reqRows.map((r) => r.staff_id))];
+      let reqNames: Record<string, string> = {}, reqUsernames: Record<string, string> = {};
+      if (reqIds.length) {
+        const [ru, rsp] = await Promise.all([
+          supabase.from("users").select("id, full_name").in("id", reqIds),
+          supabase.from("staff_profiles").select("user_id, username").in("user_id", reqIds),
+        ]);
+        if (ru.error) console.error("[VendorTeam] request names failed:", ru.error.message);
+        if (rsp.error) console.error("[VendorTeam] request usernames failed:", rsp.error.message);
+        reqNames = Object.fromEntries(((ru.data ?? []) as any[]).map((u) => [u.id, u.full_name]));
+        reqUsernames = Object.fromEntries(((rsp.data ?? []) as any[]).map((p) => [p.user_id, p.username]));
+      }
+      setRequests(reqRows.map((r) => ({ id: r.id, staff_id: r.staff_id, full_name: reqNames[r.staff_id] ?? "Unknown", username: reqUsernames[r.staff_id] ?? null })));
+    } catch (e) {
+      console.error("[VendorTeam] pending requests load failed:", e instanceof Error ? e.message : e);
     }
-    setRequests(reqRows.map((r) => ({ id: r.id, staff_id: r.staff_id, full_name: reqNames[r.staff_id] ?? "Unknown", username: reqUsernames[r.staff_id] ?? null })));
 
     setLoading(false);
   }, [vendorId]);
@@ -496,6 +540,7 @@ function MyStaffTab({ vendorId }: { vendorId: string }) {
   }
 
   if (loading) return <Skeleton count={4} />;
+  if (loadError) return <EmptyState icon={<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>} title="Couldn't load your team" sub="Please refresh to try again." />;
 
   return (
     <div className="flex flex-col gap-6">
@@ -710,21 +755,41 @@ type TShift = { id: string; staff_id: string; staff_name: string; event_name: st
 function TimesheetsTab({ vendorId }: { vendorId: string }) {
   const [shifts, setShifts] = useState<TShift[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     async function load() {
       const supabase = createClient();
-      const [shiftRes, payRes] = await Promise.all([
-        supabase.from("shifts").select("*, events(name), vendor_trucks(name)").eq("vendor_id", vendorId).eq("status", "completed").order("clock_out_time", { ascending: false }),
-        supabase.from("staff_pay_rates").select("staff_id").eq("vendor_id", vendorId),
-      ]);
-      const rows = (shiftRes.data ?? []) as any[];
-      const overrideStaff = new Set(((payRes.data ?? []) as any[]).map((r) => r.staff_id));
+      // Primary: completed shifts. Pay-override flags are secondary.
+      let rows: any[] = [];
+      let overrideStaff = new Set<any>();
+      try {
+        const [shiftRes, payRes] = await Promise.all([
+          supabase.from("shifts").select("*, events(name), vendor_trucks(name)").eq("vendor_id", vendorId).eq("status", "completed").order("clock_out_time", { ascending: false }),
+          supabase.from("staff_pay_rates").select("staff_id").eq("vendor_id", vendorId),
+        ]);
+        if (shiftRes.error) throw shiftRes.error;
+        if (payRes.error) console.error("[VendorTimesheets] pay overrides failed:", payRes.error.message);
+        rows = (shiftRes.data ?? []) as any[];
+        overrideStaff = new Set(((payRes.data ?? []) as any[]).map((r) => r.staff_id));
+      } catch (e) {
+        console.error("[VendorTimesheets] shifts load failed:", e instanceof Error ? e.message : e);
+        setLoadError(true);
+        setLoading(false);
+        return;
+      }
+
       const staffIds = [...new Set(rows.map((r) => r.staff_id))];
       let nameMap: Record<string, string> = {};
       if (staffIds.length) {
-        const { data: users } = await supabase.from("users").select("id, full_name").in("id", staffIds);
-        nameMap = Object.fromEntries(((users ?? []) as any[]).map((u) => [u.id, u.full_name]));
+        // Secondary name lookup — degrade silently to "Unknown".
+        try {
+          const { data: users, error } = await supabase.from("users").select("id, full_name").in("id", staffIds);
+          if (error) throw error;
+          nameMap = Object.fromEntries(((users ?? []) as any[]).map((u) => [u.id, u.full_name]));
+        } catch (e) {
+          console.error("[VendorTimesheets] staff names failed:", e instanceof Error ? e.message : e);
+        }
       }
       setShifts(rows.map((r) => ({
         id: r.id, staff_id: r.staff_id, staff_name: nameMap[r.staff_id] ?? "Unknown",
@@ -739,6 +804,7 @@ function TimesheetsTab({ vendorId }: { vendorId: string }) {
   }, [vendorId]);
 
   if (loading) return <Skeleton count={5} />;
+  if (loadError) return <EmptyState icon={<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>} title="Couldn't load timesheets" sub="Please refresh to try again." />;
   if (shifts.length === 0) return <EmptyState icon={<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>} title="No timesheets yet" sub="Completed shifts will appear here." />;
 
   const totalHours = shifts.reduce((s, r) => s + r.hours_worked, 0);
@@ -830,22 +896,43 @@ function downloadCsv(filename: string, rows: (string | number)[][]) {
 function InvoicesTab({ vendorId }: { vendorId: string }) {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [sub, setSub] = useState<"pending" | "approved" | "paid">("pending");
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(false);
     const supabase = createClient();
-    const { data } = await supabase.from("contractor_invoices").select("*").eq("vendor_id", vendorId).order("invoice_date", { ascending: false });
-    const rows = (data ?? []) as any[];
+
+    // Primary: contractor invoices.
+    let rows: any[] = [];
+    try {
+      const { data, error } = await supabase.from("contractor_invoices").select("*").eq("vendor_id", vendorId).order("invoice_date", { ascending: false });
+      if (error) throw error;
+      rows = (data ?? []) as any[];
+    } catch (e) {
+      console.error("[VendorInvoices] invoices load failed:", e instanceof Error ? e.message : e);
+      setLoadError(true);
+      setLoading(false);
+      return;
+    }
+
     const staffIds = [...new Set(rows.map((r) => r.staff_id).filter(Boolean))];
     let nameMap: Record<string, string> = {}, abnMap: Record<string, string | null> = {};
     if (staffIds.length) {
-      const [u, sp] = await Promise.all([
-        supabase.from("users").select("id, full_name").in("id", staffIds),
-        supabase.from("staff_profiles").select("user_id, abn").in("user_id", staffIds),
-      ]);
-      nameMap = Object.fromEntries(((u.data ?? []) as any[]).map((x) => [x.id, x.full_name]));
-      abnMap = Object.fromEntries(((sp.data ?? []) as any[]).map((x) => [x.user_id, x.abn]));
+      // Secondary name/ABN lookup — degrade silently.
+      try {
+        const [u, sp] = await Promise.all([
+          supabase.from("users").select("id, full_name").in("id", staffIds),
+          supabase.from("staff_profiles").select("user_id, abn").in("user_id", staffIds),
+        ]);
+        if (u.error) console.error("[VendorInvoices] names failed:", u.error.message);
+        if (sp.error) console.error("[VendorInvoices] ABNs failed:", sp.error.message);
+        nameMap = Object.fromEntries(((u.data ?? []) as any[]).map((x) => [x.id, x.full_name]));
+        abnMap = Object.fromEntries(((sp.data ?? []) as any[]).map((x) => [x.user_id, x.abn]));
+      } catch (e) {
+        console.error("[VendorInvoices] staff lookup failed:", e instanceof Error ? e.message : e);
+      }
     }
     setInvoices(rows.map((r) => ({ ...r, staff_name: nameMap[r.staff_id] ?? "Unknown", abn: abnMap[r.staff_id] ?? null })));
     setLoading(false);
@@ -870,7 +957,9 @@ function InvoicesTab({ vendorId }: { vendorId: string }) {
         ))}
       </div>
 
-      {loading ? <Skeleton count={3} /> : filtered.length === 0 ? (
+      {loading ? <Skeleton count={3} /> : loadError ? (
+        <EmptyState icon={<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>} title="Couldn't load invoices" sub="Please refresh to try again." />
+      ) : filtered.length === 0 ? (
         <EmptyState icon={<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>} title={`No ${sub} invoices`} />
       ) : (
         <div className="flex flex-col gap-3">
@@ -928,6 +1017,7 @@ function EmployeesPayroll({ vendorId }: { vendorId: string }) {
   const [customEnd, setCustomEnd] = useState("");
   const [rows, setRows] = useState<PayrollRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const bounds = useCallback((): [string, string] | null => {
     const now = new Date();
@@ -940,21 +1030,41 @@ function EmployeesPayroll({ vendorId }: { vendorId: string }) {
     const b = bounds();
     if (!b) { setRows([]); setLoading(false); return; }
     setLoading(true);
+    setLoadError(false);
     const supabase = createClient();
-    const { data } = await supabase.from("shifts").select("staff_id, clock_in_time, hours_worked, total_pay")
-      .eq("vendor_id", vendorId).eq("status", "completed")
-      .gte("clock_in_time", b[0] + "T00:00:00").lte("clock_in_time", b[1] + "T23:59:59")
-      .order("clock_in_time", { ascending: true });
-    const shifts = (data ?? []) as any[];
+
+    // Primary: completed shifts in range.
+    let shifts: any[] = [];
+    try {
+      const { data, error } = await supabase.from("shifts").select("staff_id, clock_in_time, hours_worked, total_pay")
+        .eq("vendor_id", vendorId).eq("status", "completed")
+        .gte("clock_in_time", b[0] + "T00:00:00").lte("clock_in_time", b[1] + "T23:59:59")
+        .order("clock_in_time", { ascending: true });
+      if (error) throw error;
+      shifts = (data ?? []) as any[];
+    } catch (e) {
+      console.error("[VendorPayroll] shifts load failed:", e instanceof Error ? e.message : e);
+      setLoadError(true);
+      setLoading(false);
+      return;
+    }
+
     const staffIds = [...new Set(shifts.map((s) => s.staff_id).filter(Boolean))];
     let nameMap: Record<string, string> = {}, abnMap: Record<string, string | null> = {};
     if (staffIds.length) {
-      const [u, sp] = await Promise.all([
-        supabase.from("users").select("id, full_name").in("id", staffIds),
-        supabase.from("staff_profiles").select("user_id, abn").in("user_id", staffIds),
-      ]);
-      nameMap = Object.fromEntries(((u.data ?? []) as any[]).map((x) => [x.id, x.full_name]));
-      abnMap = Object.fromEntries(((sp.data ?? []) as any[]).map((x) => [x.user_id, x.abn]));
+      // Secondary name/ABN lookup — degrade silently.
+      try {
+        const [u, sp] = await Promise.all([
+          supabase.from("users").select("id, full_name").in("id", staffIds),
+          supabase.from("staff_profiles").select("user_id, abn").in("user_id", staffIds),
+        ]);
+        if (u.error) console.error("[VendorPayroll] names failed:", u.error.message);
+        if (sp.error) console.error("[VendorPayroll] ABNs failed:", sp.error.message);
+        nameMap = Object.fromEntries(((u.data ?? []) as any[]).map((x) => [x.id, x.full_name]));
+        abnMap = Object.fromEntries(((sp.data ?? []) as any[]).map((x) => [x.user_id, x.abn]));
+      } catch (e) {
+        console.error("[VendorPayroll] staff lookup failed:", e instanceof Error ? e.message : e);
+      }
     }
     setRows(shifts.map((s) => {
       const hours = s.hours_worked ?? 0;
@@ -993,7 +1103,9 @@ function EmployeesPayroll({ vendorId }: { vendorId: string }) {
         <button onClick={exportCsv} disabled={rows.length === 0} className="rounded-lg border border-[#FF6B35]/40 bg-[#FF6B35]/10 px-3 py-1.5 text-xs font-semibold text-[#FF6B35] hover:bg-[#FF6B35]/20 transition-colors disabled:opacity-40">Download CSV</button>
       </div>
 
-      {loading ? <Skeleton count={4} /> : rows.length === 0 ? (
+      {loading ? <Skeleton count={4} /> : loadError ? (
+        <p className="text-sm text-zinc-600 py-8 text-center">Couldn&apos;t load payroll. Please refresh to try again.</p>
+      ) : rows.length === 0 ? (
         <p className="text-sm text-zinc-600 py-8 text-center">No completed shifts in this range.</p>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
@@ -1039,24 +1151,45 @@ function TparPayroll({ vendorId }: { vendorId: string }) {
   const [fy, setFy] = useState("2025-26");
   const [rows, setRows] = useState<{ name: string; abn: string | null; exGst: number; gst: number; gross: number }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(false);
     const supabase = createClient();
     const bounds = FY_OPTIONS.find((f) => f[0] === fy);
-    const { data } = await supabase.from("contractor_invoices").select("staff_id, subtotal, gst, total, invoice_date, status")
-      .eq("vendor_id", vendorId).eq("status", "paid")
-      .gte("invoice_date", bounds![1]).lte("invoice_date", bounds![2]);
-    const invs = (data ?? []) as any[];
+
+    // Primary: paid contractor invoices for the FY.
+    let invs: any[] = [];
+    try {
+      const { data, error } = await supabase.from("contractor_invoices").select("staff_id, subtotal, gst, total, invoice_date, status")
+        .eq("vendor_id", vendorId).eq("status", "paid")
+        .gte("invoice_date", bounds![1]).lte("invoice_date", bounds![2]);
+      if (error) throw error;
+      invs = (data ?? []) as any[];
+    } catch (e) {
+      console.error("[VendorTPAR] invoices load failed:", e instanceof Error ? e.message : e);
+      setLoadError(true);
+      setLoading(false);
+      return;
+    }
+
     const staffIds = [...new Set(invs.map((r) => r.staff_id).filter(Boolean))];
     let nameMap: Record<string, string> = {}, abnMap: Record<string, string | null> = {};
     if (staffIds.length) {
-      const [u, sp] = await Promise.all([
-        supabase.from("users").select("id, full_name").in("id", staffIds),
-        supabase.from("staff_profiles").select("user_id, abn").in("user_id", staffIds),
-      ]);
-      nameMap = Object.fromEntries(((u.data ?? []) as any[]).map((x) => [x.id, x.full_name]));
-      abnMap = Object.fromEntries(((sp.data ?? []) as any[]).map((x) => [x.user_id, x.abn]));
+      // Secondary name/ABN lookup — degrade silently.
+      try {
+        const [u, sp] = await Promise.all([
+          supabase.from("users").select("id, full_name").in("id", staffIds),
+          supabase.from("staff_profiles").select("user_id, abn").in("user_id", staffIds),
+        ]);
+        if (u.error) console.error("[VendorTPAR] names failed:", u.error.message);
+        if (sp.error) console.error("[VendorTPAR] ABNs failed:", sp.error.message);
+        nameMap = Object.fromEntries(((u.data ?? []) as any[]).map((x) => [x.id, x.full_name]));
+        abnMap = Object.fromEntries(((sp.data ?? []) as any[]).map((x) => [x.user_id, x.abn]));
+      } catch (e) {
+        console.error("[VendorTPAR] staff lookup failed:", e instanceof Error ? e.message : e);
+      }
     }
     const byStaff: Record<string, { name: string; abn: string | null; exGst: number; gst: number; gross: number }> = {};
     for (const inv of invs) {
@@ -1088,7 +1221,9 @@ function TparPayroll({ vendorId }: { vendorId: string }) {
         <button onClick={exportCsv} disabled={rows.length === 0} className="rounded-lg border border-[#FF6B35]/40 bg-[#FF6B35]/10 px-3 py-1.5 text-xs font-semibold text-[#FF6B35] hover:bg-[#FF6B35]/20 transition-colors disabled:opacity-40">Download TPAR CSV</button>
       </div>
 
-      {loading ? <Skeleton count={3} /> : rows.length === 0 ? (
+      {loading ? <Skeleton count={3} /> : loadError ? (
+        <p className="text-sm text-zinc-600 py-8 text-center">Couldn&apos;t load TPAR data. Please refresh to try again.</p>
+      ) : rows.length === 0 ? (
         <p className="text-sm text-zinc-600 py-8 text-center">No paid contractor invoices in FY {fy}.</p>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-white/[0.06]">

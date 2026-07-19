@@ -434,6 +434,7 @@ export default function VendorSchedulePage() {
   const [events, setEvents] = useState<EventOption[]>([]);
   const [staffRateMap, setStaffRateMap] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const [modal, setModal] = useState<{ existing: Schedule | null; date: string } | null>(null);
   const [claimsShift, setClaimsShift] = useState<Schedule | null>(null);
@@ -449,59 +450,90 @@ export default function VendorSchedulePage() {
   const loadRefs = useCallback(async () => {
     if (!vendorId) return;
     const supabase = createClient();
-    const { data: sva } = await supabase
-      .from("staff_vendor_assignments").select("staff_id").eq("vendor_id", vendorId).eq("status", "active");
-    const staffIds = [...new Set(((sva ?? []) as any[]).map((r) => r.staff_id).filter(Boolean))];
+    // Reference data (staff picker, trucks, events, default rates) is all
+    // secondary — degrade silently so a failure here doesn't break the page.
+    try {
+      const { data: sva, error: svaErr } = await supabase
+        .from("staff_vendor_assignments").select("staff_id").eq("vendor_id", vendorId).eq("status", "active");
+      if (svaErr) throw svaErr;
+      const staffIds = [...new Set(((sva ?? []) as any[]).map((r) => r.staff_id).filter(Boolean))];
 
-    const [uRes, tRes, eRes, rRes] = await Promise.all([
-      staffIds.length ? supabase.from("users").select("id, full_name").in("id", staffIds) : Promise.resolve({ data: [] as any[] }),
-      supabase.from("vendor_trucks").select("id, name").eq("vendor_id", vendorId).order("name", { ascending: true }),
-      supabase.from("events").select("id, name, location, start_date").eq("vendor_id", vendorId).in("status", ["upcoming", "active"]).order("start_date", { ascending: true }),
-      staffIds.length ? supabase.from("staff_pay_rates").select("staff_id, hourly_rate").eq("vendor_id", vendorId).eq("rate_type", "weekday").in("staff_id", staffIds) : Promise.resolve({ data: [] as any[] }),
-    ]);
+      const [uRes, tRes, eRes, rRes] = await Promise.all([
+        staffIds.length ? supabase.from("users").select("id, full_name").in("id", staffIds) : Promise.resolve({ data: [] as any[], error: null }),
+        supabase.from("vendor_trucks").select("id, name").eq("vendor_id", vendorId).order("name", { ascending: true }),
+        supabase.from("events").select("id, name, location, start_date").eq("vendor_id", vendorId).in("status", ["upcoming", "active"]).order("start_date", { ascending: true }),
+        staffIds.length ? supabase.from("staff_pay_rates").select("staff_id, hourly_rate").eq("vendor_id", vendorId).eq("rate_type", "weekday").in("staff_id", staffIds) : Promise.resolve({ data: [] as any[], error: null }),
+      ]);
+      if (uRes.error) console.error("[VendorSchedule] staff names failed:", uRes.error.message);
+      if (tRes.error) console.error("[VendorSchedule] trucks failed:", tRes.error.message);
+      if (eRes.error) console.error("[VendorSchedule] events failed:", eRes.error.message);
+      if (rRes.error) console.error("[VendorSchedule] pay rates failed:", rRes.error.message);
 
-    const nameMap: Record<string, string> = {};
-    for (const u of (uRes.data ?? []) as any[]) nameMap[u.id] = u.full_name ?? "Unknown";
-    setStaff(staffIds.map((id) => ({ staff_id: id, full_name: nameMap[id] ?? "Unknown" })));
-    setStaffMap((prev) => ({ ...prev, ...nameMap }));
-    setTrucks((tRes.data ?? []) as TruckOption[]);
-    const tMap: Record<string, string> = {};
-    for (const t of (tRes.data ?? []) as any[]) tMap[t.id] = t.name;
-    setTruckMap(tMap);
-    setEvents((eRes.data ?? []) as EventOption[]);
-    const rMap: Record<string, number> = {};
-    for (const r of (rRes.data ?? []) as any[]) rMap[r.staff_id] = Number(r.hourly_rate);
-    setStaffRateMap(rMap);
+      const nameMap: Record<string, string> = {};
+      for (const u of (uRes.data ?? []) as any[]) nameMap[u.id] = u.full_name ?? "Unknown";
+      setStaff(staffIds.map((id) => ({ staff_id: id, full_name: nameMap[id] ?? "Unknown" })));
+      setStaffMap((prev) => ({ ...prev, ...nameMap }));
+      setTrucks((tRes.data ?? []) as TruckOption[]);
+      const tMap: Record<string, string> = {};
+      for (const t of (tRes.data ?? []) as any[]) tMap[t.id] = t.name;
+      setTruckMap(tMap);
+      setEvents((eRes.data ?? []) as EventOption[]);
+      const rMap: Record<string, number> = {};
+      for (const r of (rRes.data ?? []) as any[]) rMap[r.staff_id] = Number(r.hourly_rate);
+      setStaffRateMap(rMap);
+    } catch (e) {
+      console.error("[VendorSchedule] reference data load failed:", e instanceof Error ? e.message : e);
+    }
   }, [vendorId]);
 
   // ── Shifts (visible range) + all open shifts ──
   const loadShifts = useCallback(async () => {
     if (!vendorId) return;
     setLoading(true);
+    setLoadError(false);
     const supabase = createClient();
-    const { data: sched } = await supabase.from("schedules").select("*")
-      .eq("vendor_id", vendorId).gte("shift_date", range.from).lte("shift_date", range.to).order("start_time", { ascending: true });
-    setSchedules((sched ?? []) as Schedule[]);
 
-    const { data: open } = await supabase.from("schedules").select("*")
-      .eq("vendor_id", vendorId).eq("is_open", true).neq("status", "cancelled")
-      .order("shift_date", { ascending: true }).order("start_time", { ascending: true });
-    const openRows = (open ?? []) as Schedule[];
-    setOpenShifts(openRows);
+    // Primary: schedules in the visible range. A failure here shows the error state.
+    try {
+      const { data: sched, error } = await supabase.from("schedules").select("*")
+        .eq("vendor_id", vendorId).gte("shift_date", range.from).lte("shift_date", range.to).order("start_time", { ascending: true });
+      if (error) throw error;
+      setSchedules((sched ?? []) as Schedule[]);
+    } catch (e) {
+      console.error("[VendorSchedule] schedules load failed:", e instanceof Error ? e.message : e);
+      setLoadError(true);
+      setLoading(false);
+      return;
+    }
 
-    const openIds = openRows.map((s) => s.id);
-    if (openIds.length) {
-      const { data: claims } = await supabase.from("shift_claims").select("schedule_id, staff_id, status").in("schedule_id", openIds);
-      const counts: Record<string, number> = {};
-      const extra = new Set<string>();
-      for (const c of (claims ?? []) as any[]) { if (c.status === "approved") counts[c.schedule_id] = (counts[c.schedule_id] ?? 0) + 1; extra.add(c.staff_id); }
-      setClaimsCounts(counts);
-      const unknown = [...extra].filter((id) => !staffMap[id]);
-      if (unknown.length) {
-        const { data: ex } = await supabase.from("users").select("id, full_name").in("id", unknown);
-        if (ex?.length) setStaffMap((prev) => { const n = { ...prev }; for (const u of ex as any[]) n[u.id] = u.full_name ?? "Unknown"; return n; });
-      }
-    } else setClaimsCounts({});
+    // Secondary: open shifts + claim counts. Degrade silently so a failure here
+    // doesn't blank out the week/month views that already loaded.
+    try {
+      const { data: open, error: openErr } = await supabase.from("schedules").select("*")
+        .eq("vendor_id", vendorId).eq("is_open", true).neq("status", "cancelled")
+        .order("shift_date", { ascending: true }).order("start_time", { ascending: true });
+      if (openErr) throw openErr;
+      const openRows = (open ?? []) as Schedule[];
+      setOpenShifts(openRows);
+
+      const openIds = openRows.map((s) => s.id);
+      if (openIds.length) {
+        const { data: claims, error: claimsErr } = await supabase.from("shift_claims").select("schedule_id, staff_id, status").in("schedule_id", openIds);
+        if (claimsErr) console.error("[VendorSchedule] claim counts failed:", claimsErr.message);
+        const counts: Record<string, number> = {};
+        const extra = new Set<string>();
+        for (const c of (claims ?? []) as any[]) { if (c.status === "approved") counts[c.schedule_id] = (counts[c.schedule_id] ?? 0) + 1; extra.add(c.staff_id); }
+        setClaimsCounts(counts);
+        const unknown = [...extra].filter((id) => !staffMap[id]);
+        if (unknown.length) {
+          const { data: ex, error: exErr } = await supabase.from("users").select("id, full_name").in("id", unknown);
+          if (exErr) console.error("[VendorSchedule] claimant names failed:", exErr.message);
+          if (ex?.length) setStaffMap((prev) => { const n = { ...prev }; for (const u of ex as any[]) n[u.id] = u.full_name ?? "Unknown"; return n; });
+        }
+      } else setClaimsCounts({});
+    } catch (e) {
+      console.error("[VendorSchedule] open shifts load failed:", e instanceof Error ? e.message : e);
+    }
     setLoading(false);
   }, [vendorId, range.from, range.to]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -633,6 +665,16 @@ export default function VendorSchedulePage() {
 
   if (authLoading) {
     return <div className="flex items-center justify-center h-64"><span className="text-zinc-500 text-sm">Loading…</span></div>;
+  }
+
+  if (loadError) {
+    return (
+      <div className="max-w-3xl mx-auto px-5 py-8">
+        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-6 py-12 text-center text-zinc-500 text-sm">
+          Couldn&apos;t load the schedule. Please refresh to try again.
+        </div>
+      </div>
+    );
   }
 
   return (

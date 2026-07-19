@@ -318,6 +318,7 @@ export default function TimesheetsPage() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [noShows, setNoShows] = useState<NoShowRow[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("pending");
   const [markPaidShift, setMarkPaidShift] = useState<Shift | null>(null);
 
@@ -326,38 +327,56 @@ export default function TimesheetsPage() {
     async function load() {
       const supabase = createClient();
 
-      const { data: eventData } = await supabase.from("events").select("id").eq("promoter_id", user!.id);
-      const eventIds = (eventData ?? []).map((e: { id: string }) => e.id);
+      // Primary: completed shifts for this promoter's events. A failure here
+      // shows the full-page error state.
+      try {
+        const { data: eventData, error: eventErr } = await supabase.from("events").select("id").eq("promoter_id", user!.id);
+        if (eventErr) throw eventErr;
+        const eventIds = (eventData ?? []).map((e: { id: string }) => e.id);
 
-      if (eventIds.length > 0) {
-        const { data } = await supabase
-          .from("shifts")
-          .select("id, staff_id, clock_in_time, clock_out_time, hours_worked, total_pay, hourly_rate, status, payment_status, payment_notes, payment_proof_url, paid_at, approved_at, total_break_minutes, break_deduction_type, event_id, truck_id, staff_profiles(full_name), events(name), vendor_trucks(name)")
-          .in("event_id", eventIds)
-          .eq("status", "completed")
-          .order("clock_out_time", { ascending: false });
-        setShifts((data as unknown as Shift[]) ?? []);
+        if (eventIds.length > 0) {
+          const { data, error } = await supabase
+            .from("shifts")
+            .select("id, staff_id, clock_in_time, clock_out_time, hours_worked, total_pay, hourly_rate, status, payment_status, payment_notes, payment_proof_url, paid_at, approved_at, total_break_minutes, break_deduction_type, event_id, truck_id, staff_profiles(full_name), events(name), vendor_trucks(name)")
+            .in("event_id", eventIds)
+            .eq("status", "completed")
+            .order("clock_out_time", { ascending: false });
+          if (error) throw error;
+          setShifts((data as unknown as Shift[]) ?? []);
+        }
+      } catch (e) {
+        console.error("[Timesheets] shifts load failed:", e instanceof Error ? e.message : e);
+        setLoadError(true);
+        setDataLoading(false);
+        return;
       }
 
-      // No shows: past scheduled/confirmed schedules
-      const today = new Date().toISOString().slice(0, 10);
-      const { data: nsData } = await supabase
-        .from("schedules")
-        .select("id, staff_id, shift_date, status")
-        .eq("vendor_id", user!.id)
-        .in("status", ["scheduled", "confirmed"])
-        .lt("shift_date", today)
-        .order("shift_date", { ascending: false });
+      // Secondary: past no-shows. Degrade silently so a failure here doesn't
+      // blank out the timesheets that already loaded.
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const { data: nsData, error: nsErr } = await supabase
+          .from("schedules")
+          .select("id, staff_id, shift_date, status")
+          .eq("vendor_id", user!.id)
+          .in("status", ["scheduled", "confirmed"])
+          .lt("shift_date", today)
+          .order("shift_date", { ascending: false });
+        if (nsErr) throw nsErr;
 
-      const nsRows = (nsData as { id: string; staff_id: string; shift_date: string; status: string }[]) ?? [];
-      if (nsRows.length > 0) {
-        const staffIds = [...new Set(nsRows.map((r) => r.staff_id))];
-        const { data: spData } = await supabase
-          .from("staff_profiles")
-          .select("user_id, full_name")
-          .in("user_id", staffIds);
-        const spMap = Object.fromEntries(((spData ?? []) as { user_id: string; full_name: string }[]).map((p) => [p.user_id, p.full_name]));
-        setNoShows(nsRows.map((r) => ({ ...r, full_name: spMap[r.staff_id] ?? r.staff_id, user_id: r.staff_id })));
+        const nsRows = (nsData as { id: string; staff_id: string; shift_date: string; status: string }[]) ?? [];
+        if (nsRows.length > 0) {
+          const staffIds = [...new Set(nsRows.map((r) => r.staff_id))];
+          const { data: spData, error: spErr } = await supabase
+            .from("staff_profiles")
+            .select("user_id, full_name")
+            .in("user_id", staffIds);
+          if (spErr) throw spErr;
+          const spMap = Object.fromEntries(((spData ?? []) as { user_id: string; full_name: string }[]).map((p) => [p.user_id, p.full_name]));
+          setNoShows(nsRows.map((r) => ({ ...r, full_name: spMap[r.staff_id] ?? r.staff_id, user_id: r.staff_id })));
+        }
+      } catch (e) {
+        console.error("[Timesheets] no-shows load failed:", e instanceof Error ? e.message : e);
       }
 
       setDataLoading(false);
@@ -390,6 +409,16 @@ export default function TimesheetsPage() {
 
   if (authLoading || dataLoading) {
     return <div className="flex items-center justify-center h-64"><span className="text-zinc-500 text-sm">Loading…</span></div>;
+  }
+
+  if (loadError) {
+    return (
+      <div className="max-w-3xl mx-auto px-5 py-8">
+        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-6 py-12 text-center text-zinc-500 text-sm">
+          Couldn&apos;t load timesheets. Please refresh to try again.
+        </div>
+      </div>
+    );
   }
 
   const now = new Date();
