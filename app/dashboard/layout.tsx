@@ -54,7 +54,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter();
 
   async function signOut() {
-    await createClient().auth.signOut();
+    const supabase = createClient();
+    await supabase.from('push_tokens').delete().eq('user_id', (await supabase.auth.getUser()).data.user?.id);
+    await supabase.auth.signOut();
     router.replace("/login");
   }
 
