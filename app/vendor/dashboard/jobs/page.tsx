@@ -82,10 +82,10 @@ const APP_STATUS_CFG: Record<string, string> = {
 };
 
 function jobStatusCls(s: string) {
-  return JOB_STATUS_CFG[s.toLowerCase()] ?? "bg-zinc-500/10 text-zinc-400 ring-1 ring-zinc-500/20";
+  return JOB_STATUS_CFG[s?.toLowerCase() ?? ""] ?? "bg-zinc-500/10 text-zinc-400 ring-1 ring-zinc-500/20";
 }
 function appStatusCls(s: string) {
-  return APP_STATUS_CFG[s.toLowerCase()] ?? "bg-zinc-500/10 text-zinc-400 ring-1 ring-zinc-500/20";
+  return APP_STATUS_CFG[s?.toLowerCase() ?? ""] ?? "bg-zinc-500/10 text-zinc-400 ring-1 ring-zinc-500/20";
 }
 
 function fmtDate(s: string | null) {
@@ -468,7 +468,7 @@ export default function VendorJobsPage() {
             sub="Post a job to start receiving applicants."
           />
         ) : (() => {
-          const visibleJobs = jobFilter === "all" ? jobs : jobs.filter((j) => j.status.toLowerCase() === jobFilter);
+          const visibleJobs = jobFilter === "all" ? jobs : jobs.filter((j) => (j.status?.toLowerCase() ?? "") === jobFilter);
           return (
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-2">
@@ -510,7 +510,7 @@ export default function VendorJobsPage() {
                           {j.applicant_count} applicant{j.applicant_count !== 1 ? "s" : ""}
                         </span>
                         <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${jobStatusCls(j.status)}`}>
-                          {j.status.toUpperCase()}
+                          {j.status?.toUpperCase() ?? ""}
                         </span>
                       </div>
                     </div>
@@ -606,7 +606,7 @@ export default function VendorJobsPage() {
                     <p className="text-xs text-zinc-500 truncate">{a.email ?? "—"}</p>
                     <p className="text-xs text-zinc-600 mt-0.5">{a.job_title} · Applied {fmtDate(a.created_at)}</p>
                   </div>
-                  {a.status.toLowerCase() === "pending" ? (
+                  {(a.status?.toLowerCase() ?? "") === "pending" ? (
                     <div className="flex items-center gap-2 shrink-0">
                       <button
                         onClick={() => setAppStatus(a.id, "approved")}
@@ -625,7 +625,7 @@ export default function VendorJobsPage() {
                     </div>
                   ) : (
                     <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${appStatusCls(a.status)}`}>
-                      {a.status.toUpperCase()}
+                      {a.status?.toUpperCase() ?? ""}
                     </span>
                   )}
                 </div>

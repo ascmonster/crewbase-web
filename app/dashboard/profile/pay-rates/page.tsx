@@ -76,10 +76,15 @@ export default function PayRatesPage() {
   async function save(e: React.FormEvent) {
     e.preventDefault();
     if (!user) return;
+    const toNum = (v: string) => v.trim() === '' ? null : (isNaN(parseFloat(v)) || parseFloat(v) <= 0 ? undefined : parseFloat(v));
+    const wd  = toNum(weekday);
+    const wk  = toNum(weekend);
+    const ph  = toNum(pubHoliday);
+    if (wd === undefined || wk === undefined || ph === undefined) {
+      alert("Please enter a valid rate greater than 0.");
+      return;
+    }
     setSaving(true);
-    const wd  = parseFloat(weekday)    || null;
-    const wk  = parseFloat(weekend)    || null;
-    const ph  = parseFloat(pubHoliday) || null;
     const { error } = await createClient()
       .from("pay_rates")
       .upsert(

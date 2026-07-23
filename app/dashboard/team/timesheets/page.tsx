@@ -354,7 +354,7 @@ export default function TimesheetsPage() {
       // Secondary: past no-shows. Degrade silently so a failure here doesn't
       // blank out the timesheets that already loaded.
       try {
-        const today = new Date().toISOString().slice(0, 10);
+        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
         const { data: nsData, error: nsErr } = await supabase
           .from("schedules")
           .select("id, staff_id, shift_date, status")
